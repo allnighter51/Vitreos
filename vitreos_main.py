@@ -186,9 +186,20 @@ class LiquidGlassCard(QFrame):
         
         super().paintEvent(event)
         
-    def update_value(self, value: float, unit: str = "", status: str = "Normal", color: str = "#00f2ff"):
-        """Update card with new values"""
-        self.value_label.setText(f"{value:.1f}")
+    def update_value(self, value, unit: str = "", status: str = "Normal", color: str = "#00f2ff"):
+        """Update card with new values - handles float or string input"""
+        try:
+            # Convert value to float safely
+            if isinstance(value, str):
+                val_float = float(value)
+            else:
+                val_float = float(value) if value is not None else 0.0
+            
+            # Format for display
+            self.value_label.setText(f"{val_float:.1f}")
+        except (ValueError, TypeError):
+            self.value_label.setText(str(value) if value is not None else "0")
+        
         self.unit_label.setText(unit)
         self.status_label.setText(status)
         self.value_label.setStyleSheet(f"""
@@ -444,6 +455,11 @@ class HardwareMonitorWorker(QObject):
     # Signal emits dict with all hardware stats
     stats_updated = pyqtSignal(dict)
     
+    # New signals for extended data types
+    processes_updated = pyqtSignal(list)  # List of (pid, name, memory_mb) tuples
+    gpu_advanced_updated = pyqtSignal(dict)  # Dict with gpu_clock, gpu_power, gpu_fan_percent
+    storage_updated = pyqtSignal(dict)  # Dict with per-drive stats and I/O counters
+    
     def __init__(self):
         super().__init__()
         self.is_running = False
@@ -460,6 +476,107 @@ class HardwareMonitorWorker(QObject):
             logger.error(f"GPU initialization error in worker: {e}")
             self.gpu_handle = None
     
+    def collect_top_processes(self) -> List[Tuple[int, str, float]]:
+        """Collect top 10 memory-consuming processes"""
+        try:
+            processes = []
+            for proc in psutil.process_iter(['pid', 'name', 'memory_percent']):
+                try:
+                    mem_mb = proc.info['memory_percent']
+                    if mem_mb > 0.1:  # Filter out trivial memory usage
+                        processes.append((proc.info['pid'], proc.info['name'], mem_mb))
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+            
+            # Sort by memory usage and return top 10
+            return sorted(processes, key=lambda x: x[2], reverse=True)[:10]
+        except Exception as e:
+            logger.error(f"Error collecting top processes: {e}")
+            return []
+    
+    def collect_gpu_advanced(self) -> Dict[str, float]:
+        """Collect detailed GPU statistics"""
+        gpu_data = {
+            'gpu_clock_mhz': 0.0,
+            'gpu_power_watts': 0.0,
+            'gpu_fan_percent': 0.0,
+        }
+        
+        if not (NVML_AVAILABLE and self.gpu_handle is not None):
+            return gpu_data
+        
+        try:
+            handle = self.gpu_handle
+            
+            # GPU Clock Speed
+            try:
+                clock = pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_GRAPHICS)
+                gpu_data['gpu_clock_mhz'] = float(clock)
+            except Exception:
+                gpu_data['gpu_clock_mhz'] = 0.0
+            
+            # Power Draw
+            try:
+                power = pynvml.nvmlDeviceGetPowerUsage(handle)
+                gpu_data['gpu_power_watts'] = float(power) / 1000.0  # Convert milliwatts to watts
+            except Exception:
+                gpu_data['gpu_power_watts'] = 0.0
+            
+            # Fan Speed (if available)
+            try:
+                fan = pynvml.nvmlDeviceGetFanSpeed(handle)
+                gpu_data['gpu_fan_percent'] = float(fan)
+            except Exception:
+                gpu_data['gpu_fan_percent'] = 0.0
+                
+        except Exception as e:
+            logger.error(f"Error collecting advanced GPU data: {e}")
+        
+        return gpu_data
+    
+    def collect_storage_data(self) -> Dict[str, Any]:
+        """Collect storage and disk I/O statistics"""
+        storage_data = {
+            'drives': {},
+            'io_counters': {},
+        }
+        
+        try:
+            # Get all mounted disk partitions
+            partitions = psutil.disk_partitions()
+            
+            for partition in partitions:
+                try:
+                    usage = psutil.disk_usage(partition.mountpoint)
+                    storage_data['drives'][partition.device] = {
+                        'mountpoint': partition.mountpoint,
+                        'total_gb': round(usage.total / (1024**3), 2),
+                        'used_gb': round(usage.used / (1024**3), 2),
+                        'free_gb': round(usage.free / (1024**3), 2),
+                        'percent': round(usage.percent, 1),
+                    }
+                except (OSError, PermissionError) as e:
+                    logger.debug(f"Cannot access {partition.device}: {e}")
+                    continue
+            
+            # Get disk I/O counters (overall)
+            try:
+                io = psutil.disk_io_counters()
+                if io:
+                    storage_data['io_counters'] = {
+                        'read_bytes': io.read_bytes,
+                        'write_bytes': io.write_bytes,
+                        'read_count': io.read_count,
+                        'write_count': io.write_count,
+                    }
+            except Exception as e:
+                logger.debug(f"Cannot get disk I/O counters: {e}")
+        
+        except Exception as e:
+            logger.error(f"Error collecting storage data: {e}")
+        
+        return storage_data
+    
     def run(self):
         """Main monitoring loop running in separate thread"""
         self.is_running = True
@@ -470,8 +587,8 @@ class HardwareMonitorWorker(QObject):
                 stats_dict = {}
                 
                 # CPU and RAM
-                stats_dict['cpu_usage'] = psutil.cpu_percent(interval=0.5)
-                stats_dict['ram_usage'] = psutil.virtual_memory().percent
+                stats_dict['cpu_usage'] = float(psutil.cpu_percent(interval=0.5))
+                stats_dict['ram_usage'] = float(psutil.virtual_memory().percent)
                 
                 # Disk
                 try:
@@ -479,7 +596,7 @@ class HardwareMonitorWorker(QObject):
                         drive = os.path.splitdrive(os.path.expanduser('~'))[0] + '\\'
                     else:
                         drive = '/'
-                    stats_dict['disk_usage'] = psutil.disk_usage(drive).percent
+                    stats_dict['disk_usage'] = float(psutil.disk_usage(drive).percent)
                 except (OSError, ValueError) as e:
                     logger.error(f"Disk usage error in worker: {e}")
                     stats_dict['disk_usage'] = 0
@@ -493,9 +610,9 @@ class HardwareMonitorWorker(QObject):
                         else:
                             temps = None
                         if temps and 'coretemp' in temps:
-                            stats_dict['cpu_temp'] = temps['coretemp'][0].current
+                            stats_dict['cpu_temp'] = float(temps['coretemp'][0].current)
                         elif temps and 'cpu_thermal' in temps:
-                            stats_dict['cpu_temp'] = temps['cpu_thermal'][0].current
+                            stats_dict['cpu_temp'] = float(temps['cpu_thermal'][0].current)
                         else:
                             stats_dict['cpu_temp'] = 45.0
                     else:
@@ -510,7 +627,7 @@ class HardwareMonitorWorker(QObject):
                         handle = self.gpu_handle
                         
                         # Temperature
-                        stats_dict['gpu_temp'] = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                        stats_dict['gpu_temp'] = float(pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU))
                         
                         # Usage
                         utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
@@ -524,22 +641,22 @@ class HardwareMonitorWorker(QObject):
                         
                         # Fan speed
                         try:
-                            stats_dict['gpu_fan_speed'] = pynvml.nvmlDeviceGetFanSpeed(handle)
+                            stats_dict['gpu_fan_speed'] = float(pynvml.nvmlDeviceGetFanSpeed(handle))
                         except (AttributeError, TypeError):
-                            stats_dict['gpu_fan_speed'] = 0
+                            stats_dict['gpu_fan_speed'] = 0.0
                         
                         logger.debug(f"Hardware check - GPU Temp: {stats_dict['gpu_temp']}°C, GPU Usage: {stats_dict['gpu_usage']}%, VRAM: {stats_dict['gpu_vram_percent']:.1f}%")
                     except Exception as e:
                         logger.error(f"GPU monitoring error in worker: {e}")
                         # Fallback values
-                        stats_dict['gpu_temp'] = stats_dict.get('cpu_temp', 45.0) + 5.0
-                        stats_dict['gpu_usage'] = stats_dict.get('cpu_usage', 0)
+                        stats_dict['gpu_temp'] = float(stats_dict.get('cpu_temp', 45.0) + 5.0)
+                        stats_dict['gpu_usage'] = float(stats_dict.get('cpu_usage', 0))
                         stats_dict['gpu_vram_percent'] = 30.0
                         stats_dict['gpu_fan_speed'] = 50.0
                 else:
                     # Fallback values if GPU not available
-                    stats_dict['gpu_temp'] = stats_dict.get('cpu_temp', 45.0) + 5.0
-                    stats_dict['gpu_usage'] = stats_dict.get('cpu_usage', 0)
+                    stats_dict['gpu_temp'] = float(stats_dict.get('cpu_temp', 45.0) + 5.0)
+                    stats_dict['gpu_usage'] = float(stats_dict.get('cpu_usage', 0))
                     stats_dict['gpu_vram_percent'] = 30.0
                     stats_dict['gpu_fan_speed'] = 50.0
                 
@@ -547,6 +664,18 @@ class HardwareMonitorWorker(QObject):
                 
                 # Emit signal with all stats
                 self.stats_updated.emit(stats_dict)
+                
+                # Emit new extended data signals (every 2 iterations = 4 seconds to reduce overhead)
+                if int(time.time() * 10) % 2 == 0:  # Collect extended data less frequently
+                    processes = self.collect_top_processes()
+                    if processes:
+                        self.processes_updated.emit(processes)
+                    
+                    gpu_advanced = self.collect_gpu_advanced()
+                    self.gpu_advanced_updated.emit(gpu_advanced)
+                    
+                    storage = self.collect_storage_data()
+                    self.storage_updated.emit(storage)
                 
                 # Sleep to match 2-second update interval
                 time.sleep(2.0)
@@ -768,13 +897,17 @@ class VitreosArchitect(QMainWindow):
             }
         """)
         
-        # Create tabs
-        self.create_vitals_tab()
-        self.create_network_tab()
-        self.create_security_tab()
-        self.create_logbook_tab()
-        self.create_console_tab()
-        self.create_settings_tab()
+        # Create tabs in correct order
+        self.create_vitals_tab()          # 1
+        self.create_network_tab()         # 2
+        self.create_processes_tab()       # 3 - NEW
+        self.create_gpu_pro_tab()         # 4 - NEW
+        self.create_security_tab()        # 5
+        self.create_storage_tab()         # 6 - NEW
+        self.create_logbook_tab()         # 7
+        self.create_remote_tab()          # 8 - NEW
+        self.create_console_tab()         # 9
+        self.create_settings_tab()        # 10
         
         main_layout.addWidget(self.tab_widget)
         
@@ -1052,7 +1185,237 @@ class VitreosArchitect(QMainWindow):
         
         network_layout.addLayout(grid_layout)
         self.tab_widget.addTab(network_widget, "Network")
+    
+    def create_processes_tab(self):
+        """Create the Processes tab showing top memory-consuming processes"""
+        processes_widget = QWidget()
+        processes_layout = QVBoxLayout(processes_widget)
         
+        # Tab title
+        tab_title = QLabel("PROCESSES - Memory & Resource Usage")
+        tab_title.setStyleSheet("""
+            QLabel {
+                color: #ffffff;
+                font-size: 18px;
+                font-weight: 700;
+                margin-bottom: 15px;
+            }
+        """)
+        processes_layout.addWidget(tab_title)
+        
+        # Top processes table
+        table_group = QGroupBox("Top 10 Memory-Consuming Processes")
+        table_group.setStyleSheet("""
+            QGroupBox {
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 12px;
+                padding: 15px;
+            }
+            QGroupBox::title {
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: 600;
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }
+        """)
+        
+        table_layout = QVBoxLayout(table_group)
+        self.processes_table = QTableWidget()
+        self.processes_table.setColumnCount(3)
+        self.processes_table.setHorizontalHeaderLabels(["PID", "Process Name", "Memory %"])
+        header = self.processes_table.horizontalHeader()
+        if header is not None:
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        
+        self.processes_table.setStyleSheet("""
+            QTableWidget {
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                color: #ffffff;
+                font-size: 12px;
+            }
+            QTableWidget::item {
+                padding: 8px;
+            }
+            QHeaderView::section {
+                background-color: rgba(255, 255, 255, 0.1);
+                color: #ffffff;
+                font-weight: 600;
+                padding: 8px;
+            }
+        """)
+        
+        table_layout.addWidget(self.processes_table)
+        processes_layout.addWidget(table_group)
+        processes_layout.addStretch()
+        
+        self.tab_widget.addTab(processes_widget, "Processes")
+    
+    def create_gpu_pro_tab(self):
+        """Create the GPU Pro tab with detailed NVIDIA statistics"""
+        gpu_widget = QWidget()
+        gpu_layout = QVBoxLayout(gpu_widget)
+        
+        # Tab title
+        tab_title = QLabel("GPU PRO - Advanced NVIDIA Statistics")
+        tab_title.setStyleSheet("""
+            QLabel {
+                color: #ffffff;
+                font-size: 18px;
+                font-weight: 700;
+                margin-bottom: 15px;
+            }
+        """)
+        gpu_layout.addWidget(tab_title)
+        
+        # GPU stats grid
+        grid_layout = QGridLayout()
+        grid_layout.setSpacing(20)
+        
+        # GPU Clock Speed
+        self.gpu_clock_card = LiquidGlassCard("Clock Speed")
+        self.gpu_clock_card.update_value(0, "MHz", "Idle", "#00f2ff")
+        
+        # GPU Power Draw
+        self.gpu_power_card = LiquidGlassCard("Power Draw")
+        self.gpu_power_card.update_value(0, "W", "Idle", "#ff9800")
+        
+        # GPU Fan Speed
+        self.gpu_fan_card = LiquidGlassCard("Fan Speed")
+        self.gpu_fan_card.update_value(0, "%", "Quiet", "#4ade80")
+        
+        # GPU Temperature (from existing vitals)
+        self.gpu_temp_pro_card = LiquidGlassCard("Temperature")
+        self.gpu_temp_pro_card.update_value(0, "°C", "Cool", "#00d2ff")
+        
+        # GPU Memory (from existing vitals)
+        self.gpu_memory_pro_card = LiquidGlassCard("VRAM Usage")
+        self.gpu_memory_pro_card.update_value(0, "%", "Normal", "#6366f1")
+        
+        # Add to grid
+        grid_layout.addWidget(self.gpu_clock_card, 0, 0)
+        grid_layout.addWidget(self.gpu_power_card, 0, 1)
+        grid_layout.addWidget(self.gpu_fan_card, 0, 2)
+        grid_layout.addWidget(self.gpu_temp_pro_card, 1, 0)
+        grid_layout.addWidget(self.gpu_memory_pro_card, 1, 1)
+        
+        gpu_layout.addLayout(grid_layout)
+        gpu_layout.addStretch()
+        
+        self.tab_widget.addTab(gpu_widget, "GPU Pro")
+    
+    def create_storage_tab(self):
+        """Create the Storage tab with disk usage and I/O statistics"""
+        storage_widget = QWidget()
+        storage_layout = QVBoxLayout(storage_widget)
+        
+        # Tab title
+        tab_title = QLabel("STORAGE - Disk Usage & I/O Activity")
+        tab_title.setStyleSheet("""
+            QLabel {
+                color: #ffffff;
+                font-size: 18px;
+                font-weight: 700;
+                margin-bottom: 15px;
+            }
+        """)
+        storage_layout.addWidget(tab_title)
+        
+        # Drives overview table
+        drives_group = QGroupBox("Disk Drives")
+        drives_group.setStyleSheet("""
+            QGroupBox {
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 12px;
+                padding: 15px;
+            }
+            QGroupBox::title {
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: 600;
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }
+        """)
+        
+        drives_layout = QVBoxLayout(drives_group)
+        self.drives_table = QTableWidget()
+        self.drives_table.setColumnCount(5)
+        self.drives_table.setHorizontalHeaderLabels(["Drive", "Total (GB)", "Used (GB)", "Free (GB)", "Usage %"])
+        header = self.drives_table.horizontalHeader()
+        if header is not None:
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        
+        self.drives_table.setStyleSheet("""
+            QTableWidget {
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                color: #ffffff;
+                font-size: 12px;
+            }
+            QTableWidget::item {
+                padding: 8px;
+            }
+            QHeaderView::section {
+                background-color: rgba(255, 255, 255, 0.1);
+                color: #ffffff;
+                font-weight: 600;
+                padding: 8px;
+            }
+        """)
+        
+        drives_layout.addWidget(self.drives_table)
+        storage_layout.addWidget(drives_group)
+        
+        # I/O Statistics
+        io_group = QGroupBox("I/O Activity")
+        io_group.setStyleSheet("""
+            QGroupBox {
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 12px;
+                padding: 15px;
+            }
+            QGroupBox::title {
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: 600;
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }
+        """)
+        
+        io_layout = QGridLayout(io_group)
+        io_layout.setSpacing(20)
+        
+        self.read_bytes_card = LiquidGlassCard("Total Read")
+        self.read_bytes_card.update_value(0, "GB", "Normal", "#4ade80")
+        
+        self.write_bytes_card = LiquidGlassCard("Total Written")
+        self.write_bytes_card.update_value(0, "GB", "Normal", "#ff6b6b")
+        
+        self.read_count_card = LiquidGlassCard("Read Ops")
+        self.read_count_card.update_value(0, "", "Normal", "#00d2ff")
+        
+        self.write_count_card = LiquidGlassCard("Write Ops")
+        self.write_count_card.update_value(0, "", "Normal", "#ff9800")
+        
+        io_layout.addWidget(self.read_bytes_card, 0, 0)
+        io_layout.addWidget(self.write_bytes_card, 0, 1)
+        io_layout.addWidget(self.read_count_card, 1, 0)
+        io_layout.addWidget(self.write_count_card, 1, 1)
+        
+        storage_layout.addWidget(io_group)
+        storage_layout.addStretch()
+        
+        self.tab_widget.addTab(storage_widget, "Storage")
+    
     def create_security_tab(self):
         """Create the Security tab with advanced monitoring"""
         security_widget = QWidget()
@@ -1341,6 +1704,130 @@ class VitreosArchitect(QMainWindow):
         console_layout.addStretch()
         
         self.tab_widget.addTab(console_widget, "Console")
+    
+    def create_remote_tab(self):
+        """Create the Remote tab for Discord Webhook and alert configuration"""
+        remote_widget = QWidget()
+        remote_layout = QVBoxLayout(remote_widget)
+        
+        # Tab title
+        tab_title = QLabel("REMOTE - Discord Integration & Alerts")
+        tab_title.setStyleSheet("""
+            QLabel {
+                color: #ffffff;
+                font-size: 18px;
+                font-weight: 700;
+                margin-bottom: 15px;
+            }
+        """)
+        remote_layout.addWidget(tab_title)
+        
+        # Discord webhook configuration group
+        webhook_group = QGroupBox("Discord Webhook Configuration")
+        webhook_group.setStyleSheet("""
+            QGroupBox {
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 12px;
+                padding: 15px;
+            }
+            QGroupBox::title {
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: 600;
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }
+        """)
+        
+        webhook_layout = QVBoxLayout(webhook_group)
+        webhook_layout.setSpacing(10)
+        
+        # Webhook URL label
+        webhook_label = QLabel("Webhook URL:")
+        webhook_label.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: 600;")
+        webhook_layout.addWidget(webhook_label)
+        
+        # Webhook URL input
+        self.remote_webhook_url_input = QLineEdit()
+        self.remote_webhook_url_input.setPlaceholderText("https://discord.com/api/webhooks/...")
+        self.remote_webhook_url_input.setStyleSheet("""
+            QLineEdit {
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
+                color: #ffffff;
+                padding: 8px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #00f2ff;
+            }
+        """)
+        webhook_layout.addWidget(self.remote_webhook_url_input)
+        
+        # Save webhook button
+        save_webhook_btn = QPushButton("Save Webhook")
+        save_webhook_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(0, 242, 255, 0.2);
+                border: 1px solid #00f2ff;
+                border-radius: 6px;
+                color: #00f2ff;
+                font-weight: 600;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background-color: rgba(0, 242, 255, 0.3);
+            }
+        """)
+        webhook_layout.addWidget(save_webhook_btn)
+        
+        remote_layout.addWidget(webhook_group)
+        
+        # Alert configuration group
+        alert_group = QGroupBox("Alert Triggers")
+        alert_group.setStyleSheet("""
+            QGroupBox {
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 12px;
+                padding: 15px;
+            }
+            QGroupBox::title {
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: 600;
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }
+        """)
+        
+        alert_layout = QVBoxLayout(alert_group)
+        alert_layout.setSpacing(10)
+        
+        # Alert checkboxes
+        self.alert_high_temp = QCheckBox("Alert on High Temperature (>85°C)")
+        self.alert_high_temp.setStyleSheet("color: #ffffff; font-size: 12px;")
+        alert_layout.addWidget(self.alert_high_temp)
+        
+        self.alert_high_gpu = QCheckBox("Alert on High GPU Usage (>90%)")
+        self.alert_high_gpu.setStyleSheet("color: #ffffff; font-size: 12px;")
+        alert_layout.addWidget(self.alert_high_gpu)
+        
+        self.alert_high_cpu = QCheckBox("Alert on High CPU Usage (>95%)")
+        self.alert_high_cpu.setStyleSheet("color: #ffffff; font-size: 12px;")
+        alert_layout.addWidget(self.alert_high_cpu)
+        
+        self.alert_disk_full = QCheckBox("Alert on Disk Full (>95%)")
+        self.alert_disk_full.setStyleSheet("color: #ffffff; font-size: 12px;")
+        alert_layout.addWidget(self.alert_disk_full)
+        
+        remote_layout.addWidget(alert_group)
+        remote_layout.addStretch()
+        
+        self.tab_widget.addTab(remote_widget, "Remote")
         
     def create_settings_tab(self):
         """Create the Settings tab with configuration options"""
@@ -1473,6 +1960,9 @@ class VitreosArchitect(QMainWindow):
         
         # Connect signals
         self.monitor_worker.stats_updated.connect(self.on_stats_updated)
+        self.monitor_worker.processes_updated.connect(self.on_processes_updated)
+        self.monitor_worker.gpu_advanced_updated.connect(self.on_gpu_advanced_updated)
+        self.monitor_worker.storage_updated.connect(self.on_storage_updated)
         self.monitor_thread.started.connect(self.monitor_worker.setup_gpu)
         self.monitor_thread.started.connect(self.monitor_worker.run)
         
@@ -1504,6 +1994,102 @@ class VitreosArchitect(QMainWindow):
             
         except Exception as e:
             logger.error(f"Error updating stats from worker: {e}")
+    
+    def on_processes_updated(self, processes_list: List[Tuple[int, str, float]]):
+        """Handle process data updates from worker thread"""
+        try:
+            self.processes_table.setRowCount(0)
+            for idx, (pid, name, mem_percent) in enumerate(processes_list):
+                self.processes_table.insertRow(idx)
+                self.processes_table.setItem(idx, 0, QTableWidgetItem(str(pid)))
+                self.processes_table.setItem(idx, 1, QTableWidgetItem(name))
+                mem_item = QTableWidgetItem(f"{mem_percent:.2f}%")
+                mem_item.setForeground(QColor("#00f2ff"))
+                self.processes_table.setItem(idx, 2, mem_item)
+        except Exception as e:
+            logger.error(f"Error updating processes table: {e}")
+    
+    def on_gpu_advanced_updated(self, gpu_data: Dict[str, float]):
+        """Handle advanced GPU data updates from worker thread"""
+        try:
+            gpu_clock = gpu_data.get('gpu_clock_mhz', 0.0)
+            gpu_power = gpu_data.get('gpu_power_watts', 0.0)
+            gpu_fan = gpu_data.get('gpu_fan_percent', 0.0)
+            
+            # Update cards with defensive .get()
+            if hasattr(self, 'gpu_clock_card'):
+                status = "Idle" if gpu_clock < 1000 else "Active"
+                self.gpu_clock_card.update_value(int(gpu_clock), "MHz", status, "#00f2ff")
+            
+            if hasattr(self, 'gpu_power_card'):
+                status = "Low" if gpu_power < 100 else "High"
+                self.gpu_power_card.update_value(gpu_power, "W", status, "#ff9800")
+            
+            if hasattr(self, 'gpu_fan_card'):
+                status = "Quiet" if gpu_fan < 50 else "Active"
+                self.gpu_fan_card.update_value(int(gpu_fan), "%", status, "#4ade80")
+            
+            # Also update the GPU Pro tab's temperature and memory cards
+            if hasattr(self, 'gpu_temp_pro_card'):
+                self.gpu_temp_pro_card.update_value(int(self.stats.gpu_temp), "°C", 
+                                                   "Cool" if self.stats.gpu_temp < 70 else "Warm", "#00d2ff")
+            
+            if hasattr(self, 'gpu_memory_pro_card'):
+                self.gpu_memory_pro_card.update_value(self.stats.gpu_vram_percent, "%", 
+                                                     "Normal", "#6366f1")
+            
+        except Exception as e:
+            logger.error(f"Error updating GPU advanced data: {e}")
+    
+    def on_storage_updated(self, storage_data: Dict[str, Any]):
+        """Handle storage data updates from worker thread"""
+        try:
+            # Update drives table
+            drives = storage_data.get('drives', {})
+            self.drives_table.setRowCount(0)
+            
+            for idx, (device, drive_info) in enumerate(drives.items()):
+                self.drives_table.insertRow(idx)
+                
+                device_item = QTableWidgetItem(device)
+                total_item = QTableWidgetItem(str(drive_info.get('total_gb', 0)))
+                used_item = QTableWidgetItem(str(drive_info.get('used_gb', 0)))
+                free_item = QTableWidgetItem(str(drive_info.get('free_gb', 0)))
+                percent_item = QTableWidgetItem(f"{drive_info.get('percent', 0):.1f}%")
+                
+                # Color code based on usage
+                usage_percent = drive_info.get('percent', 0)
+                if usage_percent >= 90:
+                    percent_item.setForeground(QColor("#ff4444"))
+                elif usage_percent >= 75:
+                    percent_item.setForeground(QColor("#ffd700"))
+                else:
+                    percent_item.setForeground(QColor("#4ade80"))
+                
+                self.drives_table.setItem(idx, 0, device_item)
+                self.drives_table.setItem(idx, 1, total_item)
+                self.drives_table.setItem(idx, 2, used_item)
+                self.drives_table.setItem(idx, 3, free_item)
+                self.drives_table.setItem(idx, 4, percent_item)
+            
+            # Update I/O statistics
+            io_counters = storage_data.get('io_counters', {})
+            read_bytes = io_counters.get('read_bytes', 0) / (1024**3)  # Convert to GB
+            write_bytes = io_counters.get('write_bytes', 0) / (1024**3)  # Convert to GB
+            read_count = io_counters.get('read_count', 0)
+            write_count = io_counters.get('write_count', 0)
+            
+            if hasattr(self, 'read_bytes_card'):
+                self.read_bytes_card.update_value(read_bytes, "GB", "Normal", "#4ade80")
+            if hasattr(self, 'write_bytes_card'):
+                self.write_bytes_card.update_value(write_bytes, "GB", "Normal", "#ff6b6b")
+            if hasattr(self, 'read_count_card'):
+                self.read_count_card.update_value(int(read_count), "", "Normal", "#00d2ff")
+            if hasattr(self, 'write_count_card'):
+                self.write_count_card.update_value(int(write_count), "", "Normal", "#ff9800")
+        
+        except Exception as e:
+            logger.error(f"Error updating storage data: {e}")
             
     def get_advanced_temperatures(self):
         """Get advanced temperature data"""
