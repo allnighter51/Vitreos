@@ -1,0 +1,47 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "${workspaceFolder}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {},
+      "transportType": "stdio"
+    },
+    "git": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-git",
+        "--repository",
+        "${workspaceFolder}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {},
+      "transportType": "stdio"
+    },
+    "fetch": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-fetch"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {},
+      "transportType": "stdio"
+    },
+    "memory": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {},
+      "transportType": "stdio"
+    }
+  }
+}
