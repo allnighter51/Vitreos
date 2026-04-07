@@ -587,6 +587,9 @@ class VitreosArchitect(QMainWindow):
         self.drag_position = None
         self.header_widget = None
         
+        # System tray icon
+        self.tray_icon = None
+        
         # Advanced monitoring systems
         self.security_monitor = SecurityMonitor()
         self.network_analyzer = NetworkAnalyzer()
@@ -598,6 +601,8 @@ class VitreosArchitect(QMainWindow):
         logger.info("UI initialization started")
         self.setup_ui()
         logger.info("UI initialized successfully")
+        self.setup_system_tray()
+        logger.info("System tray initialized")
         self.setup_monitoring()
         logger.info("Monitoring systems initialized")
         
@@ -622,9 +627,9 @@ class VitreosArchitect(QMainWindow):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
-        # Premium Glass Background - Semi-transparent dark slate
+        # Premium Glass Background - Solid dark color for stability
         palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(15, 15, 25, 200)) # Premium Deep Tint
+        palette.setColor(QPalette.ColorRole.Window, QColor(26, 26, 46))  # #1a1a2e solid
         self.setPalette(palette)
         
         # Fix invisible background - enable proper background rendering
@@ -632,6 +637,89 @@ class VitreosArchitect(QMainWindow):
         
         # Center window
         self.center_window()
+        
+    def setup_system_tray(self):
+        """Setup system tray icon with context menu"""
+        try:
+            # Create tray icon
+            self.tray_icon = QSystemTrayIcon(self)
+            
+            # Set icon - use a simple circle icon as fallback
+            icon = QIcon.fromTheme("vitreos-icon")
+            if icon.isNull():
+                # Create a simple colored pixmap as fallback
+                pixmap = QPixmap(64, 64)
+                pixmap.fill(QColor(0, 242, 255))  # Cyan color
+                icon = QIcon(pixmap)
+            self.tray_icon.setIcon(icon)
+            
+            # Create context menu
+            tray_menu = QMenu(self)
+            
+            show_action = tray_menu.addAction("Show")
+            if show_action is not None:
+                show_action.triggered.connect(self.show_window)
+            
+            hide_action = tray_menu.addAction("Hide")
+            if hide_action is not None:
+                hide_action.triggered.connect(self.hide_window)
+            
+            tray_menu.addSeparator()
+            
+            exit_action = tray_menu.addAction("Exit")
+            if exit_action is not None:
+                exit_action.triggered.connect(self.exit_application)
+            
+            self.tray_icon.setContextMenu(tray_menu)
+            
+            # Handle tray icon click (show/hide on single click)
+            self.tray_icon.activated.connect(self.on_tray_icon_activated)
+            
+            self.tray_icon.show()
+            logger.info("System tray icon initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize system tray: {e}")
+    
+    def on_tray_icon_activated(self, reason):
+        """Handle tray icon activation"""
+        from PyQt6.QtWidgets import QSystemTrayIcon as STI
+        if reason == STI.ActivationReason.DoubleClick:
+            if self.isVisible():
+                self.hide_window()
+            else:
+                self.show_window()
+    
+    def show_window(self):
+        """Show the window from tray"""
+        self.showNormal()
+        self.activateWindow()
+    
+    def hide_window(self):
+        """Hide the window to tray"""
+        self.hide()
+    
+    def exit_application(self):
+        """Exit the application completely"""
+        logger.info("Exit action triggered from tray")
+        # Stop the hardware monitor worker thread
+        if self.monitor_worker is not None:
+            self.monitor_worker.stop()
+        if self.monitor_thread is not None and self.monitor_thread.isRunning():
+            self.monitor_thread.quit()
+            self.monitor_thread.wait()
+        
+        # Hide tray icon
+        if self.tray_icon is not None:
+            self.tray_icon.hide()
+        
+        # Save config and exit
+        self.is_running = False
+        self.security_monitor.monitoring_active = False
+        self.save_config()
+        
+        # Force quit the application
+        from PyQt6.QtWidgets import QApplication
+        QApplication.quit()
         
     def center_window(self):
         """Center window on screen"""
@@ -647,7 +735,7 @@ class VitreosArchitect(QMainWindow):
         """Setup the main user interface with tabs"""
         # Main widget and layout
         main_widget = QWidget()
-        main_widget.setStyleSheet("background-color: rgba(15, 15, 25, 200);")
+        main_widget.setStyleSheet("background-color: #1a1a2e;")
         main_layout = QVBoxLayout(main_widget)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
@@ -686,6 +774,7 @@ class VitreosArchitect(QMainWindow):
         self.create_security_tab()
         self.create_logbook_tab()
         self.create_console_tab()
+        self.create_settings_tab()
         
         main_layout.addWidget(self.tab_widget)
         
@@ -809,6 +898,8 @@ class VitreosArchitect(QMainWindow):
         """Create the Vitals tab with core system monitoring"""
         vitals_widget = QWidget()
         vitals_layout = QVBoxLayout(vitals_widget)
+        vitals_layout.setSpacing(10)
+        vitals_layout.setContentsMargins(10, 10, 10, 10)
         
         # Tab title
         tab_title = QLabel("VITALS - Real-time System Health")
@@ -824,7 +915,8 @@ class VitreosArchitect(QMainWindow):
         
         # Create monitoring grid
         grid_layout = QGridLayout()
-        grid_layout.setSpacing(20)
+        grid_layout.setSpacing(10)
+        grid_layout.setContentsMargins(10, 10, 10, 10)
         
         # Create advanced monitoring cards
         self.cpu_temp_card = LiquidGlassCard("CPU Temperature")
@@ -1250,6 +1342,123 @@ class VitreosArchitect(QMainWindow):
         
         self.tab_widget.addTab(console_widget, "Console")
         
+    def create_settings_tab(self):
+        """Create the Settings tab with configuration options"""
+        settings_widget = QWidget()
+        settings_layout = QVBoxLayout(settings_widget)
+        settings_layout.setSpacing(10)
+        settings_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Tab title
+        tab_title = QLabel("SETTINGS - Application Configuration")
+        tab_title.setStyleSheet("""
+            QLabel {
+                color: #ffffff;
+                font-size: 18px;
+                font-weight: 700;
+                margin-bottom: 15px;
+            }
+        """)
+        settings_layout.addWidget(tab_title)
+        
+        # Settings group
+        settings_group = QGroupBox("System Settings")
+        settings_group.setStyleSheet("""
+            QGroupBox {
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 12px;
+                padding: 15px;
+                margin: 0;
+            }
+            QGroupBox::title {
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: 600;
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }
+        """)
+        
+        settings_group_layout = QVBoxLayout(settings_group)
+        settings_group_layout.setSpacing(15)
+        
+        # Start with Windows checkbox
+        self.startup_checkbox = QCheckBox("Start with Windows")
+        self.startup_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: 500;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 4px;
+                background-color: rgba(255, 255, 255, 0.05);
+            }
+            QCheckBox::indicator:checked {
+                background-color: #00f2ff;
+                border-color: #00f2ff;
+            }
+            QCheckBox::indicator:hover {
+                border-color: #00f2ff;
+            }
+        """)
+        
+        # Load startup state from registry
+        self.startup_checkbox.setChecked(self.is_startup_enabled())
+        self.startup_checkbox.stateChanged.connect(self.on_startup_checkbox_changed)
+        
+        settings_group_layout.addWidget(self.startup_checkbox)
+        settings_layout.addWidget(settings_group)
+        settings_layout.addStretch()
+        
+        self.tab_widget.addTab(settings_widget, "Settings")
+    
+    def is_startup_enabled(self):
+        """Check if app is registered for Windows startup"""
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
+                               r'Software\Microsoft\Windows\CurrentVersion\Run')
+            try:
+                value, _ = winreg.QueryValueEx(key, "Vitreos")
+                return True
+            except WindowsError:
+                return False
+            finally:
+                winreg.CloseKey(key)
+        except Exception as e:
+            logger.error(f"Error reading startup registry: {e}")
+            return False
+    
+    def on_startup_checkbox_changed(self, state):
+        """Handle startup checkbox state change"""
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                               r'Software\Microsoft\Windows\CurrentVersion\Run',
+                               0, winreg.KEY_WRITE)
+            try:
+                if state:  # Checked
+                    # Get the path to the current executable
+                    app_path = sys.argv[0]
+                    if not os.path.isabs(app_path):
+                        app_path = os.path.abspath(app_path)
+                    winreg.SetValueEx(key, "Vitreos", 0, winreg.REG_SZ, 
+                                    f'"{app_path}"')
+                    logger.info("Added Vitreos to Windows startup")
+                else:  # Unchecked
+                    winreg.DeleteValue(key, "Vitreos")
+                    logger.info("Removed Vitreos from Windows startup")
+            finally:
+                winreg.CloseKey(key)
+        except Exception as e:
+            logger.error(f"Error modifying startup registry: {e}")
+            self.show_status_message(f"Error updating startup settings: {str(e)}", "#ff4444")
+        
     def setup_monitoring(self):
         """Setup advanced system monitoring with worker thread"""
         # Load configuration
@@ -1307,14 +1516,14 @@ class VitreosArchitect(QMainWindow):
                     temps = None
                 if temps and 'coretemp' in temps:
                     self.stats.cpu_temp = temps['coretemp'][0].current
-                elif 'cpu_thermal' in temps:
+                elif temps and 'cpu_thermal' in temps:
                     self.stats.cpu_temp = temps['cpu_thermal'][0].current
                 else:
                     self.stats.cpu_temp = 45.0
             else:
                 self.stats.cpu_temp = 45.0
         except (OSError, AttributeError, IndexError) as e:
-            print(f"Temperature reading error: {e}")
+            logger.error(f"Temperature reading error: {e}")
             self.stats.cpu_temp = 45.0
             
     def analyze_network(self):
@@ -1621,31 +1830,56 @@ class VitreosArchitect(QMainWindow):
         except Exception as e:
             print(f"Error saving config: {e}")
         
+    def changeEvent(self, event):
+        """Handle window state changes"""
+        from PyQt6.QtCore import QEvent
+        
+        # Check if window is being minimized
+        if self.isMinimized():
+            logger.debug("Window minimized - hiding to tray")
+            self.hide()
+            event.accept()
+            return
+        
+        super().changeEvent(event)
+    
     def closeEvent(self, event):
-        """Handle window close event"""
-        logger.info("Closing application")
-        self.is_running = False
-        self.security_monitor.monitoring_active = False
-        
-        # Stop the hardware monitor worker thread
-        if self.monitor_worker is not None:
-            self.monitor_worker.stop()
-        if self.monitor_thread is not None and self.monitor_thread.isRunning():
-            self.monitor_thread.quit()
-            self.monitor_thread.wait()
-        
-        self.save_config()
-        event.accept()
+        """Handle window close event - minimize to tray instead of exiting"""
+        # Check if this is a real close or minimize to tray
+        if self.tray_icon is not None and self.tray_icon.isVisible():
+            # Minimize to tray instead of closing
+            logger.debug("Close button clicked - hiding to tray")
+            self.hide()
+            event.ignore()
+        else:
+            # Exit application
+            logger.info("Closing application (no tray available)")
+            self.is_running = False
+            self.security_monitor.monitoring_active = False
+            
+            # Hide tray icon immediately
+            if self.tray_icon is not None:
+                self.tray_icon.hide()
+            
+            # Stop the hardware monitor worker thread
+            if self.monitor_worker is not None:
+                self.monitor_worker.stop()
+            if self.monitor_thread is not None and self.monitor_thread.isRunning():
+                self.monitor_thread.quit()
+                self.monitor_thread.wait()
+            
+            self.save_config()
+            event.accept()
     
     def mousePressEvent(self, event):
         """Handle mouse press - check if in header area for dragging"""
         if self.header_widget is not None:
-            # Get the header widget's geometry in global coordinates
-            header_global_rect = self.header_widget.geometry()
-            header_global_rect.moveTo(self.mapToGlobal(header_global_rect.topLeft()))
+            # Get header height and check if click is within header area
+            header_height = self.header_widget.height()
+            # Use local coordinates for accurate detection
+            click_y = event.position().y()
             
-            # Check if click is in header area (with some padding)
-            if event.globalPosition().y() < header_global_rect.bottom() + 20:
+            if click_y <= header_height:
                 self.is_dragging = True
                 # Store the offset between click position and window position
                 self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
