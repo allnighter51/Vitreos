@@ -23,49 +23,76 @@ from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, Tuple
 from collections import deque
 import statistics
+from io import StringIO
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger(__name__)
-
-# Resource path helper for PyInstaller bundles
-def resource_path(relative_path):
-    """Get absolute path to resource, works in development and PyInstaller bundles"""
-    if hasattr(sys, '_MEIPASS'):
-        # Running as PyInstaller bundle
-        return os.path.join(sys._MEIPASS, relative_path)
-    # Running as script in development
-    return os.path.join(os.path.abspath("."), relative_path)
-
+# PyQt imports first (before logging handler definition)
 try:
+    from PyQt6.QtCore import Qt, QTimer, QSize, QPoint, QPropertyAnimation, QEasingCurve, pyqtSignal, QThread, QObject
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                 QLabel, QPushButton, QFrame, QGridLayout, QScrollArea,
                                 QTextEdit, QLineEdit, QComboBox, QCheckBox, QGroupBox,
                                 QProgressBar, QSystemTrayIcon, QMenu, QMenuBar, QToolBar,
                                 QStatusBar, QMessageBox, QFileDialog, QDialog, QTabWidget,
-                                QTableWidget, QTableWidgetItem, QHeaderView)
-    from PyQt6.QtCore import Qt, QTimer, QSize, QPoint, QPropertyAnimation, QEasingCurve, pyqtSignal, QThread, QObject
+                                QTableWidget, QTableWidgetItem, QHeaderView, QPlainTextEdit)
     from PyQt6.QtGui import (QIcon, QPixmap, QPalette, QColor, QFont, QFontMetrics, 
                            QLinearGradient, QBrush, QPainter, QPen, QRegion, QCursor)
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
     PYQT6_AVAILABLE = True
-    logger.info("PyQt6 imports successful")
 except ImportError:
     PYQT6_AVAILABLE = False
-    logger.warning("PyQt6 not available - GUI components will not be loaded")
+
+# Configure logging BEFORE creating handler
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+# Logging handler with PyQt signal support (after UI initialization)
+class UILoggingHandler(QObject, logging.Handler):
+    """Logging handler that emits PyQt signals for UI display"""
+    
+    log_signal = pyqtSignal(str)
+    
+    def __init__(self):
+        QObject.__init__(self)
+        logging.Handler.__init__(self)
+        self.setFormatter(logging.Formatter('%(levelname)-8s | %(message)s'))
+    
+    def emit(self, record):
+        """Format record and emit PyQt signal for UI thread to display"""
+        try:
+            msg = self.format(record)
+            # Try to emit signal if main window exists
+            try:
+                self.log_signal.emit(msg)
+            except RuntimeError:
+                # Signal may fail if called before main loop starts
+                pass
+        except Exception:
+            self.handleError(record)
+
+# Create and register the UI logging handler
+ui_log_handler = UILoggingHandler()
+logger.addHandler(ui_log_handler)
+
+# Resource path helper for PyInstaller bundles
+def resource_path(relative_path):
+    """Get absolute path to resource, works in development and PyInstaller bundles"""
+    base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
+    return os.path.join(base_path, relative_path)
 
 # Try to import advanced GPU monitoring
 try:
     import pynvml
     NVML_AVAILABLE = True
-    logger.info("GPU monitoring (NVML) imports successful")
+    if PYQT6_AVAILABLE:
+        logger.info("GPU monitoring (NVML) imports successful")
 except ImportError:
     NVML_AVAILABLE = False
-    logger.warning("GPU monitoring (NVML) not available - using fallback mode")
+    if PYQT6_AVAILABLE:
+        logger.warning("GPU monitoring (NVML) not available - using fallback mode")
 
 @dataclass
 class SystemStats:
@@ -244,7 +271,7 @@ class SecurityMonitor:
     def get_current_usb_devices(self):
         """Get current USB devices"""
         try:
-            result = subprocess.run(['wmic', 'path', 'Win32_USBControllerDevice', 'get', 'Dependent'], 
+            result = subprocess.run([r'C:\Windows\System32\wbem\wmic.exe', 'path', 'Win32_USBControllerDevice', 'get', 'Dependent'], 
                                   capture_output=True, text=True, timeout=5)
             return set(result.stdout.split())
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
@@ -344,8 +371,8 @@ class NetworkAnalyzer:
     def measure_ping_jitter(self):
         """Measure network ping and jitter"""
         try:
-            # Use Google DNS as ping target
-            result = subprocess.run(['ping', '-n', '5', '8.8.8.8'], 
+            # Use Google DNS as ping target with absolute path
+            result = subprocess.run([r'C:\Windows\System32\ping.exe', '-n', '5', '8.8.8.8'], 
                                   capture_output=True, text=True, timeout=10)
             
             if result.returncode == 0:
@@ -470,23 +497,70 @@ class HardwareMonitorWorker(QObject):
     processes_updated = pyqtSignal(list)  # List of (pid, name, memory_mb) tuples
     gpu_advanced_updated = pyqtSignal(dict)  # Dict with gpu_clock, gpu_power, gpu_fan_percent
     storage_updated = pyqtSignal(dict)  # Dict with per-drive stats and I/O counters
+    network_updated = pyqtSignal(dict)  # Dict with downloaded and uploaded data
     
     def __init__(self):
         super().__init__()
         self.is_running = False
         self.gpu_handle = None
-        # Thermal prediction: store last 5 CPU temp readings
-        self.cpu_temp_history = deque(maxlen=5)
+        # Thermal prediction: store last 10 CPU temp readings
+        self.cpu_temp_history = deque(maxlen=10)
         
     def setup_gpu(self):
-        """Initialize GPU handle once"""
+        """Initialize GPU handle by finding first device that supports power usage"""
         try:
-            if NVML_AVAILABLE:
-                pynvml.nvmlInit()
+            logger.debug("Initializing NVIDIA GPU Handle...")
+            
+            if not NVML_AVAILABLE:
+                logger.warning("NVML not available - GPU monitoring disabled")
+                self.gpu_handle = None
+                return
+            
+            pynvml.nvmlInit()
+            logger.info("NVML initialized successfully")
+            
+            device_count = pynvml.nvmlDeviceGetCount()
+            logger.info(f"Found {device_count} NVIDIA GPU device(s)")
+            
+            # Loop through devices to find one that supports power usage
+            for i in range(device_count):
+                try:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                    device_name = pynvml.nvmlDeviceGetName(handle)
+                    logger.debug(f"FOUND GPU: {device_name}")
+                    
+                    # Test if this device supports power usage query
+                    power_supported = False
+                    try:
+                        power = pynvml.nvmlDeviceGetPowerUsage(handle)
+                        power_supported = True
+                        logger.info(f"SUCCESS: Found GPU {device_name}. Power Support: True")
+                        self.gpu_handle = handle
+                        return
+                    except Exception as power_err:
+                        error_type = type(power_err).__name__
+                        logger.warning(f"POWER SUPPORTED: False ({error_type})")
+                        continue
+                
+                except Exception as e:
+                    error_type = type(e).__name__
+                    logger.warning(f"Cannot access GPU {i} ({error_type}): {e}")
+                    continue
+            
+            # If we get here, no device supports power usage
+            logger.warning("No GPU with power support found - using fallback mode")
+            
+            if device_count > 0:
+                # Use first device anyway for temp/usage data
                 self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-                logger.info("GPU initialized successfully in worker thread")
+                logger.info("Using first GPU for basic monitoring (no power/fan data)")
+            else:
+                self.gpu_handle = None
+                logger.warning("No NVIDIA GPU devices found")
+        
         except Exception as e:
-            logger.error(f"GPU initialization error in worker: {e}")
+            error_type = type(e).__name__
+            logger.error(f"GPU initialization failed ({error_type}): {e}")
             self.gpu_handle = None
     
     def collect_top_processes(self) -> List[Tuple[int, str, float]]:
@@ -525,32 +599,39 @@ class HardwareMonitorWorker(QObject):
             try:
                 clock = pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_GRAPHICS)
                 gpu_data['gpu_clock_mhz'] = float(clock)
-            except Exception:
+            except Exception as e:
+                error_type = type(e).__name__
+                logger.debug(f"GPU clock speed error ({error_type}): {e}")
                 gpu_data['gpu_clock_mhz'] = 0.0
             
             # Power Draw
             try:
                 power = pynvml.nvmlDeviceGetPowerUsage(handle)
                 gpu_data['gpu_power_watts'] = float(power) / 1000.0  # Convert milliwatts to watts
-            except Exception:
+            except Exception as e:
+                error_type = type(e).__name__
+                logger.debug(f"GPU power draw error ({error_type}): {e}")
                 gpu_data['gpu_power_watts'] = 0.0
             
             # Fan Speed (if available)
             try:
                 fan = pynvml.nvmlDeviceGetFanSpeed(handle)
                 gpu_data['gpu_fan_percent'] = float(fan)
-            except Exception:
+            except Exception as e:
+                error_type = type(e).__name__
+                logger.debug(f"GPU fan speed error ({error_type}): {e}")
                 gpu_data['gpu_fan_percent'] = 0.0
                 
         except Exception as e:
-            logger.error(f"Error collecting advanced GPU data: {e}")
+            error_type = type(e).__name__
+            logger.error(f"Error collecting advanced GPU data ({error_type}): {e}")
         
         return gpu_data
     
     def calculate_thermal_prediction(self, current_temp: float) -> float:
         """
         Calculate predicted CPU temperature 30 seconds from now based on trend.
-        Uses last 5 readings to calculate trend slope.
+        Uses last 10 readings to calculate trend slope.
         """
         try:
             # Add current reading to history
@@ -558,6 +639,7 @@ class HardwareMonitorWorker(QObject):
             
             # Need at least 2 readings to calculate trend
             if len(self.cpu_temp_history) < 2:
+                logger.debug(f"DEBUG: Thermal History size: {len(self.cpu_temp_history)}/10. Prediction pending.")
                 return current_temp  # Return current if not enough history
             
             # Calculate simple linear trend: (temp_now - temp_oldest) / time_points
@@ -565,7 +647,7 @@ class HardwareMonitorWorker(QObject):
             n = len(temps)
             
             # Calculate trend using least squares regression
-            x_values = list(range(n))  # Time points [0, 1, 2, 3, 4]
+            x_values = list(range(n))  # Time points [0, 1, 2, ...]
             
             sum_x = sum(x_values)
             sum_y = sum(temps)
@@ -575,6 +657,7 @@ class HardwareMonitorWorker(QObject):
             # Slope calculation: (n*sum_xy - sum_x*sum_y) / (n*sum_x2 - sum_x^2)
             denominator = n * sum_x2 - sum_x * sum_x
             if denominator == 0:
+                logger.debug("Thermal prediction: no trend detected (flat temperature)")
                 return current_temp  # No trend
             
             slope = (n * sum_xy - sum_x * sum_y) / denominator
@@ -586,10 +669,14 @@ class HardwareMonitorWorker(QObject):
             # Clamp to reasonable range (shouldn't jump more than 20°C in 30 seconds)
             predicted_temp = max(current_temp - 5, min(predicted_temp, current_temp + 20))
             
+            if len(self.cpu_temp_history) >= 5:
+                logger.debug(f"Thermal trend: slope={slope:.3f}, predicted_30s={predicted_temp:.1f}°C")
+            
             return round(predicted_temp, 1)
             
         except Exception as e:
-            logger.error(f"Error calculating thermal prediction: {e}")
+            error_type = type(e).__name__
+            logger.error(f"Error calculating thermal prediction ({error_type}): {e}")
             return current_temp
     
     def collect_storage_data(self) -> Dict[str, Any]:
@@ -640,12 +727,13 @@ class HardwareMonitorWorker(QObject):
         self.is_running = True
         logger.info("Hardware monitor worker thread started")
         
+        loop_count = 0
         while self.is_running:
             try:
                 stats_dict = {}
                 
                 # CPU and RAM
-                stats_dict['cpu_usage'] = float(psutil.cpu_percent(interval=0.5))
+                stats_dict['cpu_usage'] = float(psutil.cpu_percent(interval=None))
                 stats_dict['ram_usage'] = float(psutil.virtual_memory().percent)
                 
                 # Disk
@@ -657,7 +745,7 @@ class HardwareMonitorWorker(QObject):
                     stats_dict['disk_usage'] = float(psutil.disk_usage(drive).percent)
                 except (OSError, ValueError) as e:
                     logger.error(f"Disk usage error in worker: {e}")
-                    stats_dict['disk_usage'] = 0
+                    stats_dict['disk_usage'] = 0.0
                 
                 # Temperature
                 try:
@@ -679,8 +767,8 @@ class HardwareMonitorWorker(QObject):
                     logger.error(f"Temperature reading error in worker: {e}")
                     stats_dict['cpu_temp'] = 45.0
                 
-                # Thermal Prediction (based on temperature trend)
-                stats_dict['thermal_prediction'] = float(self.calculate_thermal_prediction(stats_dict['cpu_temp']))
+                # Thermal Prediction (based on temperature trend) - ALWAYS calculate
+                stats_dict['thermal_prediction'] = float(self.calculate_thermal_prediction(stats_dict.get('cpu_temp', 45.0)))
                 
                 # GPU data
                 if NVML_AVAILABLE and self.gpu_handle is not None:
@@ -705,7 +793,8 @@ class HardwareMonitorWorker(QObject):
                             fan_speed = pynvml.nvmlDeviceGetFanSpeed(handle)
                             stats_dict['gpu_fan_speed'] = float(fan_speed)
                         except Exception as e:
-                            logger.error(f"GPU fan speed error: {e}")
+                            error_type = type(e).__name__
+                            logger.error(f"GPU fan speed error ({error_type}): {e}")
                             stats_dict['gpu_fan_speed'] = 0.0
                         
                         # Power Draw (milliwatts -> watts)
@@ -713,12 +802,15 @@ class HardwareMonitorWorker(QObject):
                             power_mw = pynvml.nvmlDeviceGetPowerUsage(handle)
                             stats_dict['gpu_power_draw'] = float(power_mw) / 1000.0  # Convert mW to W
                         except Exception as e:
-                            logger.error(f"GPU power draw error: {e}")
+                            error_type = type(e).__name__
+                            logger.error(f"GPU power draw error ({error_type}): {e}")
                             stats_dict['gpu_power_draw'] = 0.0
                         
-                        logger.debug(f"Hardware check - GPU Temp: {stats_dict['gpu_temp']}°C, GPU Usage: {stats_dict['gpu_usage']}%, VRAM: {stats_dict['gpu_vram_percent']:.1f}%, Fan: {stats_dict['gpu_fan_speed']}%")
+                        # Log hardware poll at TRACE level
+                        logger.debug(f"TRACE: Hardware Poll - CPU: {stats_dict['cpu_usage']:.1f}%, GPU: {stats_dict['gpu_power_draw']:.1f}W, Fan: {stats_dict['gpu_fan_speed']:.1f}%")
                     except Exception as e:
-                        logger.error(f"GPU monitoring error in worker: {e}")
+                        error_type = type(e).__name__
+                        logger.error(f"GPU monitoring error in worker ({error_type}): {e}")
                         # Fallback values
                         stats_dict['gpu_temp'] = float(stats_dict.get('cpu_temp', 45.0) + 5.0)
                         stats_dict['gpu_usage'] = float(stats_dict.get('cpu_usage', 0))
@@ -733,13 +825,12 @@ class HardwareMonitorWorker(QObject):
                     stats_dict['gpu_fan_speed'] = 0.0
                     stats_dict['gpu_power_draw'] = 0.0
                 
-                logger.debug(f"Hardware check - CPU: {stats_dict['cpu_usage']:.1f}%, RAM: {stats_dict['ram_usage']:.1f}%, Disk: {stats_dict['disk_usage']:.1f}%, CPU Temp: {stats_dict['cpu_temp']:.1f}°C")
-                
                 # Emit signal with all stats
                 self.stats_updated.emit(stats_dict)
                 
-                # Emit new extended data signals (every 2 iterations = 4 seconds to reduce overhead)
-                if int(time.time() * 10) % 2 == 0:  # Collect extended data less frequently
+                # Collect extended data every 2 iterations = 4 seconds to reduce overhead
+                loop_count += 1
+                if loop_count % 2 == 0:
                     processes = self.collect_top_processes()
                     if processes:
                         self.processes_updated.emit(processes)
@@ -749,6 +840,18 @@ class HardwareMonitorWorker(QObject):
                     
                     storage = self.collect_storage_data()
                     self.storage_updated.emit(storage)
+                    
+                    # Collect network data
+                    try:
+                        net_io = psutil.net_io_counters()
+                        network_data = {
+                            'downloaded': net_io.bytes_recv / 1024 / 1024,  # Convert to MB
+                            'uploaded': net_io.bytes_sent / 1024 / 1024,    # Convert to MB
+                        }
+                        self.network_updated.emit(network_data)
+                    except Exception as e:
+                        error_type = type(e).__name__
+                        logger.debug(f"Network data collection error ({error_type}): {e}")
                 
                 # Sleep to match 2-second update interval
                 time.sleep(2.0)
@@ -1629,22 +1732,33 @@ class VitreosArchitect(QMainWindow):
         """)
         logbook_layout.addWidget(tab_title)
         
-        # Logbook content would go here
-        # For now, just a placeholder
-        placeholder = QLabel("Historical data visualization coming soon...")
-        placeholder.setStyleSheet("color: #888888; font-size: 14px;")
-        logbook_layout.addWidget(placeholder)
+        # Log text area
+        self.logbook_list_widget = QTextEdit()
+        self.logbook_list_widget.setReadOnly(True)
+        self.logbook_list_widget.setStyleSheet("""
+            QTextEdit {
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+                color: #ffffff;
+                font-family: 'Courier New', monospace;
+                font-size: 11px;
+                padding: 10px;
+            }
+        """)
+        logbook_layout.addWidget(self.logbook_list_widget)
         logbook_layout.addStretch()
         
         self.tab_widget.addTab(logbook_widget, "Logbook")
         
+        
     def create_console_tab(self):
-        """Create the Console tab with active control"""
+        """Create the Console tab with active control and live logging"""
         console_widget = QWidget()
         console_layout = QVBoxLayout(console_widget)
         
         # Tab title
-        tab_title = QLabel("CONSOLE - Active Control & Testing")
+        tab_title = QLabel("CONSOLE - Live Debug Terminal")
         tab_title.setStyleSheet("""
             QLabel {
                 color: #ffffff;
@@ -1787,6 +1901,25 @@ class VitreosArchitect(QMainWindow):
         grid_layout.addWidget(self.reset_config_btn, 1, 1)
         
         console_layout.addLayout(grid_layout)
+        
+        # Console output (CMD-style terminal with QPlainTextEdit) - at the bottom
+        self.console_output = QPlainTextEdit()
+        self.console_output.setReadOnly(True)
+        self.console_output.setStyleSheet("""
+            QPlainTextEdit {
+                background-color: #0a0a0a;
+                color: #00ff00;
+                border: 1px solid rgba(0, 255, 0, 0.2);
+                border-radius: 6px;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 10px;
+                padding: 10px;
+                margin-bottom: 10px;
+            }
+        """)
+        self.console_output.setPlaceholderText("Waiting for debug output...")
+        console_layout.addWidget(self.console_output, 1)  # Give it priority space
+        
         console_layout.addStretch()
         
         self.tab_widget.addTab(console_widget, "Console")
@@ -2037,6 +2170,10 @@ class VitreosArchitect(QMainWindow):
         # Load configuration
         self.webhook_input.setText(self.config.get('webhook_url', ''))
         
+        # Connect logging handler to console output
+        if ui_log_handler.log_signal is not None:
+            ui_log_handler.log_signal.connect(self.update_console)
+        
         # Create and start hardware monitoring worker thread
         self.monitor_worker = HardwareMonitorWorker()
         self.monitor_thread = QThread()
@@ -2060,19 +2197,19 @@ class VitreosArchitect(QMainWindow):
     def on_stats_updated(self, stats_dict):
         """Receive hardware stats from worker thread and update UI"""
         try:
-            # Update stats object
-            self.stats.cpu_usage = stats_dict.get('cpu_usage', 0)
-            self.stats.ram_usage = stats_dict.get('ram_usage', 0)
-            self.stats.disk_usage = stats_dict.get('disk_usage', 0)
-            self.stats.cpu_temp = stats_dict.get('cpu_temp', 45.0)
-            self.stats.thermal_prediction = stats_dict.get('thermal_prediction', 45.0)
-            self.stats.gpu_temp = stats_dict.get('gpu_temp', 0)
-            self.stats.gpu_usage = stats_dict.get('gpu_usage', 0)
-            self.stats.gpu_vram_used = stats_dict.get('gpu_vram_used', 0)
-            self.stats.gpu_vram_total = stats_dict.get('gpu_vram_total', 0)
-            self.stats.gpu_vram_percent = stats_dict.get('gpu_vram_percent', 0)
-            self.stats.gpu_fan_speed = stats_dict.get('gpu_fan_speed', 0)
-            self.stats.gpu_power_draw = stats_dict.get('gpu_power_draw', 0)
+            # Update stats object - use .get() for safety
+            self.stats.cpu_usage = float(stats_dict.get('cpu_usage', 0.0))
+            self.stats.ram_usage = float(stats_dict.get('ram_usage', 0.0))
+            self.stats.disk_usage = float(stats_dict.get('disk_usage', 0.0))
+            self.stats.cpu_temp = float(stats_dict.get('cpu_temp', 45.0))
+            self.stats.thermal_prediction = float(stats_dict.get('thermal_prediction', 45.0))
+            self.stats.gpu_temp = float(stats_dict.get('gpu_temp', 0.0))
+            self.stats.gpu_usage = float(stats_dict.get('gpu_usage', 0.0))
+            self.stats.gpu_vram_used = float(stats_dict.get('gpu_vram_used', 0.0))
+            self.stats.gpu_vram_total = float(stats_dict.get('gpu_vram_total', 0.0))
+            self.stats.gpu_vram_percent = float(stats_dict.get('gpu_vram_percent', 0.0))
+            self.stats.gpu_fan_speed = float(stats_dict.get('gpu_fan_speed', 0.0))
+            self.stats.gpu_power_draw = float(stats_dict.get('gpu_power_draw', 0.0))
             
             # Update UI
             self.update_ui()
@@ -2082,6 +2219,32 @@ class VitreosArchitect(QMainWindow):
             
         except Exception as e:
             logger.error(f"Error updating stats from worker: {e}")
+    
+    def update_console(self, message: str):
+        """Update console output with log messages (connected from UILoggingHandler)"""
+        try:
+            if not hasattr(self, 'console_output') or self.console_output is None:
+                return
+            
+            # Append message to console
+            self.console_output.appendPlainText(message)
+            
+            # Auto-scroll to bottom
+            scrollbar = self.console_output.verticalScrollBar()
+            if scrollbar:
+                scrollbar.setValue(scrollbar.maximum())
+            
+            # Keep only last 200 lines to prevent memory bloat
+            doc = self.console_output.document()
+            if doc and doc.blockCount() > 200:
+                cursor = self.console_output.textCursor()
+                cursor.movePosition(cursor.MoveOperation.Start)
+                # Delete first 50 lines
+                for _ in range(50):
+                    cursor.select(cursor.SelectionType.BlockUnderCursor)
+                    cursor.removeSelectedText()
+        except Exception as e:
+            logger.error(f"Error updating console: {e}")
     
     def on_processes_updated(self, processes_list: List[Tuple[int, str, float]]):
         """Handle process data updates from worker thread"""
