@@ -582,6 +582,11 @@ class VitreosArchitect(QMainWindow):
         self.monitor_worker = None
         self.monitor_thread = None
         
+        # Frameless window dragging state
+        self.is_dragging = False
+        self.drag_position = None
+        self.header_widget = None
+        
         # Advanced monitoring systems
         self.security_monitor = SecurityMonitor()
         self.network_analyzer = NetworkAnalyzer()
@@ -648,8 +653,8 @@ class VitreosArchitect(QMainWindow):
         main_layout.setSpacing(20)
         
         # Header with title and controls
-        header_layout = self.create_header()
-        main_layout.addLayout(header_layout)
+        header_widget = self.create_header()
+        main_layout.addWidget(header_widget)
         
         # Tab widget for different monitoring areas
         self.tab_widget = QTabWidget()
@@ -711,7 +716,19 @@ class VitreosArchitect(QMainWindow):
         
     def create_header(self):
         """Create the header with title and controls"""
-        header_layout = QHBoxLayout()
+        # Create a widget to serve as the drag handle
+        header_widget = QFrame()
+        header_widget.setStyleSheet("""
+            QFrame {
+                background-color: transparent;
+                border: none;
+            }
+        """)
+        header_widget.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.header_widget = header_widget
+        
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(0, 0, 0, 0)
         
         # Title section
         title_layout = QVBoxLayout()
@@ -786,7 +803,7 @@ class VitreosArchitect(QMainWindow):
         header_layout.addStretch()
         header_layout.addLayout(controls_layout)
         
-        return header_layout
+        return header_widget
         
     def create_vitals_tab(self):
         """Create the Vitals tab with core system monitoring"""
@@ -1619,6 +1636,40 @@ class VitreosArchitect(QMainWindow):
         
         self.save_config()
         event.accept()
+    
+    def mousePressEvent(self, event):
+        """Handle mouse press - check if in header area for dragging"""
+        if self.header_widget is not None:
+            # Get the header widget's geometry in global coordinates
+            header_global_rect = self.header_widget.geometry()
+            header_global_rect.moveTo(self.mapToGlobal(header_global_rect.topLeft()))
+            
+            # Check if click is in header area (with some padding)
+            if event.globalPosition().y() < header_global_rect.bottom() + 20:
+                self.is_dragging = True
+                # Store the offset between click position and window position
+                self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                event.accept()
+                return
+        
+        super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        """Handle mouse move - drag window if in drag mode"""
+        if self.is_dragging:
+            # Move window so that the click point stays under the cursor
+            self.move(event.globalPosition().toPoint() - self.drag_position)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        """Handle mouse release - stop dragging"""
+        if self.is_dragging:
+            self.is_dragging = False
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
 
 def main():
     """Main application entry point"""
