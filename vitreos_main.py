@@ -39,7 +39,7 @@ try:
                                 QProgressBar, QSystemTrayIcon, QMenu, QMenuBar, QToolBar,
                                 QStatusBar, QMessageBox, QFileDialog, QDialog, QTabWidget,
                                 QTableWidget, QTableWidgetItem, QHeaderView)
-    from PyQt6.QtCore import Qt, QTimer, QSize, QPoint, QPropertyAnimation, QEasingCurve, pyqtSignal
+    from PyQt6.QtCore import Qt, QTimer, QSize, QPoint, QPropertyAnimation, QEasingCurve, pyqtSignal, QThread, QObject
     from PyQt6.QtGui import (QIcon, QPixmap, QPalette, QColor, QFont, QFontMetrics, 
                            QLinearGradient, QBrush, QPainter, QPen, QRegion, QCursor)
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
@@ -438,6 +438,128 @@ class PredictiveThermalAlert:
             
         return None
 
+class HardwareMonitorWorker(QObject):
+    """Worker thread for hardware monitoring - runs in separate thread"""
+    
+    # Signal emits dict with all hardware stats
+    stats_updated = pyqtSignal(dict)
+    
+    def __init__(self):
+        super().__init__()
+        self.is_running = False
+        self.gpu_handle = None
+        
+    def setup_gpu(self):
+        """Initialize GPU handle once"""
+        try:
+            if NVML_AVAILABLE:
+                pynvml.nvmlInit()
+                self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                logger.info("GPU initialized successfully in worker thread")
+        except Exception as e:
+            logger.error(f"GPU initialization error in worker: {e}")
+            self.gpu_handle = None
+    
+    def run(self):
+        """Main monitoring loop running in separate thread"""
+        self.is_running = True
+        logger.info("Hardware monitor worker thread started")
+        
+        while self.is_running:
+            try:
+                stats_dict = {}
+                
+                # CPU and RAM
+                stats_dict['cpu_usage'] = psutil.cpu_percent(interval=0.5)
+                stats_dict['ram_usage'] = psutil.virtual_memory().percent
+                
+                # Disk
+                try:
+                    if platform.system() == 'Windows':
+                        drive = os.path.splitdrive(os.path.expanduser('~'))[0] + '\\'
+                    else:
+                        drive = '/'
+                    stats_dict['disk_usage'] = psutil.disk_usage(drive).percent
+                except (OSError, ValueError) as e:
+                    logger.error(f"Disk usage error in worker: {e}")
+                    stats_dict['disk_usage'] = 0
+                
+                # Temperature
+                try:
+                    if hasattr(psutil, "sensors_temperatures"):
+                        temps_fn = getattr(psutil, "sensors_temperatures", None)
+                        if temps_fn is not None:
+                            temps = temps_fn()
+                        else:
+                            temps = None
+                        if temps and 'coretemp' in temps:
+                            stats_dict['cpu_temp'] = temps['coretemp'][0].current
+                        elif temps and 'cpu_thermal' in temps:
+                            stats_dict['cpu_temp'] = temps['cpu_thermal'][0].current
+                        else:
+                            stats_dict['cpu_temp'] = 45.0
+                    else:
+                        stats_dict['cpu_temp'] = 45.0
+                except (OSError, AttributeError, IndexError) as e:
+                    logger.error(f"Temperature reading error in worker: {e}")
+                    stats_dict['cpu_temp'] = 45.0
+                
+                # GPU data
+                if NVML_AVAILABLE and self.gpu_handle is not None:
+                    try:
+                        handle = self.gpu_handle
+                        
+                        # Temperature
+                        stats_dict['gpu_temp'] = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                        
+                        # Usage
+                        utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                        stats_dict['gpu_usage'] = float(utilization.gpu)
+                        
+                        # VRAM
+                        memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                        stats_dict['gpu_vram_used'] = float(memory.used) / 1024 / 1024 / 1024
+                        stats_dict['gpu_vram_total'] = float(memory.total) / 1024 / 1024 / 1024
+                        stats_dict['gpu_vram_percent'] = (float(memory.used) / float(memory.total)) * 100
+                        
+                        # Fan speed
+                        try:
+                            stats_dict['gpu_fan_speed'] = pynvml.nvmlDeviceGetFanSpeed(handle)
+                        except (AttributeError, TypeError):
+                            stats_dict['gpu_fan_speed'] = 0
+                        
+                        logger.debug(f"Hardware check - GPU Temp: {stats_dict['gpu_temp']}°C, GPU Usage: {stats_dict['gpu_usage']}%, VRAM: {stats_dict['gpu_vram_percent']:.1f}%")
+                    except Exception as e:
+                        logger.error(f"GPU monitoring error in worker: {e}")
+                        # Fallback values
+                        stats_dict['gpu_temp'] = stats_dict.get('cpu_temp', 45.0) + 5.0
+                        stats_dict['gpu_usage'] = stats_dict.get('cpu_usage', 0)
+                        stats_dict['gpu_vram_percent'] = 30.0
+                        stats_dict['gpu_fan_speed'] = 50.0
+                else:
+                    # Fallback values if GPU not available
+                    stats_dict['gpu_temp'] = stats_dict.get('cpu_temp', 45.0) + 5.0
+                    stats_dict['gpu_usage'] = stats_dict.get('cpu_usage', 0)
+                    stats_dict['gpu_vram_percent'] = 30.0
+                    stats_dict['gpu_fan_speed'] = 50.0
+                
+                logger.debug(f"Hardware check - CPU: {stats_dict['cpu_usage']:.1f}%, RAM: {stats_dict['ram_usage']:.1f}%, Disk: {stats_dict['disk_usage']:.1f}%, CPU Temp: {stats_dict['cpu_temp']:.1f}°C")
+                
+                # Emit signal with all stats
+                self.stats_updated.emit(stats_dict)
+                
+                # Sleep to match 2-second update interval
+                time.sleep(2.0)
+                
+            except Exception as e:
+                logger.error(f"Hardware monitor worker error: {e}")
+                time.sleep(2.0)
+    
+    def stop(self):
+        """Stop the monitoring loop"""
+        self.is_running = False
+        logger.info("Hardware monitor worker thread stopping")
+
 class VitreosArchitect(QMainWindow):
     """Main application window with advanced liquid glass aesthetics"""
     
@@ -456,9 +578,9 @@ class VitreosArchitect(QMainWindow):
         self.stats = SystemStats()
         self.config = self.load_config()
         
-        # GPU state - will be initialized asynchronously
-        self.gpu_handle = None
-        self.gpu_initialized = False
+        # Hardware monitoring worker and thread
+        self.monitor_worker = None
+        self.monitor_thread = None
         
         # Advanced monitoring systems
         self.security_monitor = SecurityMonitor()
@@ -1112,86 +1234,50 @@ class VitreosArchitect(QMainWindow):
         self.tab_widget.addTab(console_widget, "Console")
         
     def setup_monitoring(self):
-        """Setup advanced system monitoring"""
+        """Setup advanced system monitoring with worker thread"""
         # Load configuration
         self.webhook_input.setText(self.config.get('webhook_url', ''))
         
-        # Schedule GPU initialization asynchronously (100ms after UI is shown)
-        if NVML_AVAILABLE:
-            QTimer.singleShot(100, self.init_gpu_async)
+        # Create and start hardware monitoring worker thread
+        self.monitor_worker = HardwareMonitorWorker()
+        self.monitor_thread = QThread()
         
-        # Start monitoring timer
-        self.monitoring_timer = QTimer()
-        self.monitoring_timer.timeout.connect(self.update_monitoring)
-        self.monitoring_timer.start(2000)  # Update every 2 seconds
+        # Move worker to thread
+        self.monitor_worker.moveToThread(self.monitor_thread)
+        
+        # Connect signals
+        self.monitor_worker.stats_updated.connect(self.on_stats_updated)
+        self.monitor_thread.started.connect(self.monitor_worker.setup_gpu)
+        self.monitor_thread.started.connect(self.monitor_worker.run)
+        
+        # Start the thread
+        self.monitor_thread.start()
         
         self.is_running = True
         
-    def init_gpu_async(self):
-        """Initialize GPU asynchronously without blocking UI"""
+    def on_stats_updated(self, stats_dict):
+        """Receive hardware stats from worker thread and update UI"""
         try:
-            pynvml.nvmlInit()
-            self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            self.gpu_initialized = True
-            logger.info("GPU initialized successfully")
-        except Exception as e:
-            logger.error(f"GPU initialization error: {e}")
-            self.gpu_handle = None
-            self.gpu_initialized = False
-        
-    def update_monitoring(self):
-        """Update all advanced monitoring data"""
-        if not self.is_running:
-            return
-            
-        try:
-            # Get system statistics
-            self.stats.cpu_usage = psutil.cpu_percent(interval=1)
-            self.stats.ram_usage = psutil.virtual_memory().percent
-            
-            # Get disk usage from system drive
-            try:
-                # For Windows, use C: drive; for others, use root
-                import platform
-                if platform.system() == 'Windows':
-                    drive = os.path.splitdrive(os.path.expanduser('~'))[0] + '\\'
-                else:
-                    drive = '/'
-                self.stats.disk_usage = psutil.disk_usage(drive).percent
-            except (OSError, ValueError) as e:
-                logger.error(f"Disk usage error: {e}")
-                self.stats.disk_usage = 0
-            
-            # Get temperatures
-            self.get_advanced_temperatures()
-            
-            # Get GPU data (if available)
-            if NVML_AVAILABLE:
-                self.get_gpu_data()
-            else:
-                # Fallback values
-                self.stats.gpu_temp = self.stats.cpu_temp + 5.0
-                self.stats.gpu_usage = self.stats.cpu_usage
-                self.stats.gpu_vram_percent = 30.0
-                self.stats.gpu_fan_speed = 50.0
-            
-            # Hardware check logging
-            logger.debug(f"Hardware check - CPU: {self.stats.cpu_usage:.1f}%, RAM: {self.stats.ram_usage:.1f}%, Disk: {self.stats.disk_usage:.1f}%, CPU Temp: {self.stats.cpu_temp:.1f}°C")
-            
-            # Network analysis
-            self.analyze_network()
-            
-            # Power estimation
-            self.estimate_power_draw()
-            
-            # Predictive thermal analysis
-            self.predictive_alert.add_reading(self.stats.cpu_temp, self.stats.cpu_usage)
+            # Update stats object
+            self.stats.cpu_usage = stats_dict.get('cpu_usage', 0)
+            self.stats.ram_usage = stats_dict.get('ram_usage', 0)
+            self.stats.disk_usage = stats_dict.get('disk_usage', 0)
+            self.stats.cpu_temp = stats_dict.get('cpu_temp', 45.0)
+            self.stats.gpu_temp = stats_dict.get('gpu_temp', 0)
+            self.stats.gpu_usage = stats_dict.get('gpu_usage', 0)
+            self.stats.gpu_vram_used = stats_dict.get('gpu_vram_used', 0)
+            self.stats.gpu_vram_total = stats_dict.get('gpu_vram_total', 0)
+            self.stats.gpu_vram_percent = stats_dict.get('gpu_vram_percent', 0)
+            self.stats.gpu_fan_speed = stats_dict.get('gpu_fan_speed', 0)
             
             # Update UI
             self.update_ui()
             
+            # Predictive thermal analysis
+            self.predictive_alert.add_reading(self.stats.cpu_temp, self.stats.cpu_usage)
+            
         except Exception as e:
-            logger.error(f"Advanced monitoring error: {e}")
+            logger.error(f"Error updating stats from worker: {e}")
             
     def get_advanced_temperatures(self):
         """Get advanced temperature data"""
@@ -1213,50 +1299,6 @@ class VitreosArchitect(QMainWindow):
         except (OSError, AttributeError, IndexError) as e:
             print(f"Temperature reading error: {e}")
             self.stats.cpu_temp = 45.0
-            
-    def get_gpu_data(self):
-        """Get advanced GPU data using pynvml"""
-        if not self.gpu_initialized or self.gpu_handle is None:
-            # GPU not yet initialized, use fallback values
-            self.stats.gpu_temp = self.stats.cpu_temp + 5.0
-            self.stats.gpu_usage = self.stats.cpu_usage
-            self.stats.gpu_vram_percent = 30.0
-            self.stats.gpu_fan_speed = 50.0
-            return
-            
-        try:
-            handle = self.gpu_handle
-            
-            # Temperature
-            temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
-            self.stats.gpu_temp = temp
-            
-            # Usage
-            utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
-            self.stats.gpu_usage = float(utilization.gpu)
-            
-            # VRAM
-            memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            self.stats.gpu_vram_used = float(memory.used) / 1024 / 1024 / 1024  # GB
-            self.stats.gpu_vram_total = float(memory.total) / 1024 / 1024 / 1024  # GB
-            self.stats.gpu_vram_percent = (float(memory.used) / float(memory.total)) * 100
-            
-            # Fan speed
-            try:
-                fan_speed = pynvml.nvmlDeviceGetFanSpeed(handle)
-                self.stats.gpu_fan_speed = fan_speed
-            except (AttributeError, TypeError):
-                self.stats.gpu_fan_speed = 0
-            
-            logger.debug(f"Hardware check - GPU Temp: {self.stats.gpu_temp}°C, GPU Usage: {self.stats.gpu_usage}%, VRAM: {self.stats.gpu_vram_percent:.1f}%")
-                
-        except Exception as e:
-            logger.error(f"GPU monitoring error: {e}")
-            # Fallback values
-            self.stats.gpu_temp = self.stats.cpu_temp + 5.0
-            self.stats.gpu_usage = self.stats.cpu_usage
-            self.stats.gpu_vram_percent = 30.0
-            self.stats.gpu_fan_speed = 50.0
             
     def analyze_network(self):
         """Analyze network performance"""
@@ -1567,6 +1609,14 @@ class VitreosArchitect(QMainWindow):
         logger.info("Closing application")
         self.is_running = False
         self.security_monitor.monitoring_active = False
+        
+        # Stop the hardware monitor worker thread
+        if self.monitor_worker is not None:
+            self.monitor_worker.stop()
+        if self.monitor_thread is not None and self.monitor_thread.isRunning():
+            self.monitor_thread.quit()
+            self.monitor_thread.wait()
+        
         self.save_config()
         event.accept()
 
