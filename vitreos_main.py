@@ -900,6 +900,16 @@ class VitreosArchitect(QMainWindow):
         self.network_analyzer = NetworkAnalyzer()
         self.predictive_alert = PredictiveThermalAlert()
         
+        # Database for hardware history
+        from vitreos_db import VitreosDatabase
+        self.database = VitreosDatabase()
+        self.db_write_counter = 0  # Counter for 60-second throttling
+        
+        # HUD mode state
+        self.hud_mode_active = False
+        self.normal_geometry = None  # Store normal window geometry when entering HUD mode
+        self.mini_mode_button = None  # Reference to mini mode button for text updates
+        
         # Setup window
         logger.info("Setting up application window")
         self.setup_window()
@@ -1169,6 +1179,25 @@ class VitreosArchitect(QMainWindow):
         # Controls section
         controls_layout = QHBoxLayout()
         
+        # Mini Mode (HUD) button
+        self.mini_mode_button = QPushButton("⊞")
+        self.mini_mode_button.setFixedSize(30, 30)
+        self.mini_mode_button.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255, 255, 255, 0.1);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 8px;
+                color: #ffffff;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 0.2);
+                border-color: rgba(255, 255, 255, 0.4);
+            }
+        """)
+        self.mini_mode_button.clicked.connect(self.toggle_hud_mode)
+        
         # Minimize button
         minimize_btn = QPushButton("—")
         minimize_btn.setFixedSize(30, 30)
@@ -1207,6 +1236,7 @@ class VitreosArchitect(QMainWindow):
         """)
         close_btn.clicked.connect(self.close)
         
+        controls_layout.addWidget(self.mini_mode_button)
         controls_layout.addWidget(minimize_btn)
         controls_layout.addWidget(close_btn)
         
@@ -1215,6 +1245,68 @@ class VitreosArchitect(QMainWindow):
         header_layout.addLayout(controls_layout)
         
         return header_widget
+    
+    def toggle_hud_mode(self):
+        """Toggle between normal and mini HUD mode"""
+        if self.hud_mode_active:
+            self.restore_from_hud()
+        else:
+            self.enter_hud_mode()
+    
+    def enter_hud_mode(self):
+        """Enter mini overlay mode - shrink window, hide tabs"""
+        self.hud_mode_active = True
+        
+        # Store current geometry
+        self.normal_geometry = self.geometry()
+        
+        # Hide tabs and sidebar
+        self.tab_widget.hide()
+        self.status_bar.hide()
+        
+        # Update button text (null-safe)
+        if self.mini_mode_button is not None:
+            self.mini_mode_button.setText("□")  # Show maximize symbol
+            self.mini_mode_button.setToolTip("Restore to normal size")
+        
+        # Shrink window to 300x150
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            screen_geometry = screen.geometry()
+            # Position in bottom-right corner
+            x = screen_geometry.width() - 320
+            y = screen_geometry.height() - 170
+            self.setGeometry(x, y, 300, 150)
+        
+        # Set window to stay on top
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        self.show()
+        
+        logger.info("Entered HUD mode")
+    
+    def restore_from_hud(self):
+        """Restore normal mode from HUD overlay"""
+        self.hud_mode_active = False
+        
+        # Remove stay-on-top flag
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
+        
+        # Show tabs and status bar
+        self.tab_widget.show()
+        self.status_bar.show()
+        
+        # Update button text (null-safe)
+        if self.mini_mode_button is not None:
+            self.mini_mode_button.setText("⊞")  # Show minimize symbol
+            self.mini_mode_button.setToolTip("Enter HUD mode")
+        
+        # Restore previous geometry
+        if self.normal_geometry is not None:
+            self.setGeometry(self.normal_geometry)
+        
+        self.show()
+        
+        logger.info("Exited HUD mode")
         
     def create_vitals_tab(self):
         """Create the Vitals tab with core system monitoring"""
@@ -1814,7 +1906,6 @@ class VitreosArchitect(QMainWindow):
         
         webhook_layout.addWidget(webhook_label)
         webhook_layout.addWidget(self.webhook_input)
-        
         console_layout.addWidget(webhook_group)
         
         # Console controls grid
@@ -1823,78 +1914,21 @@ class VitreosArchitect(QMainWindow):
         
         # Control buttons
         self.kill_zombie_btn = QPushButton("💀 Kill Zombie Processes")
-        self.kill_zombie_btn.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                padding: 12px;
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.2);
-                border-color: #ff4444;
-            }
-        """)
+        self.kill_zombie_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #ff4444; }")
         self.kill_zombie_btn.clicked.connect(self.kill_zombie_processes)
         
         self.webhook_test_btn = QPushButton("🧪 Test Webhook")
-        self.webhook_test_btn.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                padding: 12px;
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.2);
-                border-color: #00f2ff;
-            }
-        """)
+        self.webhook_test_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #00f2ff; }")
         self.webhook_test_btn.clicked.connect(self.test_webhook)
         
         self.screenshot_btn = QPushButton("📸 Take Screenshot")
-        self.screenshot_btn.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                padding: 12px;
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.2);
-                border-color: #4ade80;
-            }
-        """)
+        self.screenshot_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #4ade80; }")
         self.screenshot_btn.clicked.connect(self.take_screenshot)
         
         self.reset_config_btn = QPushButton("🔄 Reset Configuration")
-        self.reset_config_btn.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                padding: 12px;
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.2);
-                border-color: #ff4444;
-            }
-        """)
+        self.reset_config_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #ff4444; }")
         self.reset_config_btn.clicked.connect(self.reset_configuration)
         
-        # Add buttons to grid
         grid_layout.addWidget(self.kill_zombie_btn, 0, 0)
         grid_layout.addWidget(self.webhook_test_btn, 0, 1)
         grid_layout.addWidget(self.screenshot_btn, 1, 0)
@@ -1902,9 +1936,10 @@ class VitreosArchitect(QMainWindow):
         
         console_layout.addLayout(grid_layout)
         
-        # Console output (CMD-style terminal with QPlainTextEdit) - at the bottom
+        # --- THE CMD TERMINAL (BULLETPROOF FIX) ---
         self.console_output = QPlainTextEdit()
         self.console_output.setReadOnly(True)
+        self.console_output.setMinimumHeight(300)  # THIS PREVENTS IT FROM DISAPPEARING
         self.console_output.setStyleSheet("""
             QPlainTextEdit {
                 background-color: #0a0a0a;
@@ -1912,15 +1947,15 @@ class VitreosArchitect(QMainWindow):
                 border: 1px solid rgba(0, 255, 0, 0.2);
                 border-radius: 6px;
                 font-family: 'Consolas', 'Courier New', monospace;
-                font-size: 10px;
+                font-size: 12px;
                 padding: 10px;
-                margin-bottom: 10px;
+                margin-top: 15px;
             }
         """)
         self.console_output.setPlaceholderText("Waiting for debug output...")
-        console_layout.addWidget(self.console_output, 1)  # Give it priority space
         
-        console_layout.addStretch()
+        # Add widget with stretch factor 1
+        console_layout.addWidget(self.console_output, 1)
         
         self.tab_widget.addTab(console_widget, "Console")
     
@@ -2210,6 +2245,16 @@ class VitreosArchitect(QMainWindow):
             self.stats.gpu_vram_percent = float(stats_dict.get('gpu_vram_percent', 0.0))
             self.stats.gpu_fan_speed = float(stats_dict.get('gpu_fan_speed', 0.0))
             self.stats.gpu_power_draw = float(stats_dict.get('gpu_power_draw', 0.0))
+            
+            # Database write every 60 seconds (calls come every 2 seconds = 30 * 2 = 60 seconds)
+            self.db_write_counter += 1
+            if self.db_write_counter >= 30:
+                self.database.insert_hardware_log(
+                    cpu_temp=self.stats.cpu_temp,
+                    gpu_temp=self.stats.gpu_temp,
+                    power_draw=self.stats.gpu_power_draw
+                )
+                self.db_write_counter = 0
             
             # Update UI
             self.update_ui()
