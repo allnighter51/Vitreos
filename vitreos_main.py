@@ -17,11 +17,20 @@ import winreg
 import subprocess
 import ctypes
 import ctypes.wintypes
+import logging
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, Tuple
 from collections import deque
 import statistics
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 try:
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
@@ -35,15 +44,19 @@ try:
                            QLinearGradient, QBrush, QPainter, QPen, QRegion, QCursor)
     from PyQt6.QtOpenGLWidgets import QOpenGLWidget
     PYQT6_AVAILABLE = True
+    logger.info("PyQt6 imports successful")
 except ImportError:
     PYQT6_AVAILABLE = False
+    logger.warning("PyQt6 not available - GUI components will not be loaded")
 
 # Try to import advanced GPU monitoring
 try:
     import pynvml
     NVML_AVAILABLE = True
+    logger.info("GPU monitoring (NVML) imports successful")
 except ImportError:
     NVML_AVAILABLE = False
+    logger.warning("GPU monitoring (NVML) not available - using fallback mode")
 
 @dataclass
 class SystemStats:
@@ -430,9 +443,11 @@ class VitreosArchitect(QMainWindow):
     
     def __init__(self):
         super().__init__()
+        logger.info("Initializing Vitreos Architect application")
         
         # Check PyQt6 availability
         if not PYQT6_AVAILABLE:
+            logger.critical("PyQt6 is not available - application cannot start")
             self.show_error_dialog("PyQt6 is required for the Vitreos interface.\n\nRun 'install_requirements.bat' to install it.")
             sys.exit(1)
             
@@ -447,9 +462,13 @@ class VitreosArchitect(QMainWindow):
         self.predictive_alert = PredictiveThermalAlert()
         
         # Setup window
+        logger.info("Setting up application window")
         self.setup_window()
+        logger.info("UI initialization started")
         self.setup_ui()
+        logger.info("UI initialized successfully")
         self.setup_monitoring()
+        logger.info("Monitoring systems initialized")
         
     def show_error_dialog(self, message: str):
         """Show error dialog for missing dependencies"""
@@ -1120,7 +1139,7 @@ class VitreosArchitect(QMainWindow):
                     drive = '/'
                 self.stats.disk_usage = psutil.disk_usage(drive).percent
             except (OSError, ValueError) as e:
-                print(f"Disk usage error: {e}")
+                logger.error(f"Disk usage error: {e}")
                 self.stats.disk_usage = 0
             
             # Get temperatures
@@ -1135,7 +1154,10 @@ class VitreosArchitect(QMainWindow):
                 self.stats.gpu_usage = self.stats.cpu_usage
                 self.stats.gpu_vram_percent = 30.0
                 self.stats.gpu_fan_speed = 50.0
-                
+            
+            # Hardware check logging
+            logger.debug(f"Hardware check - CPU: {self.stats.cpu_usage:.1f}%, RAM: {self.stats.ram_usage:.1f}%, Disk: {self.stats.disk_usage:.1f}%, CPU Temp: {self.stats.cpu_temp:.1f}°C")
+            
             # Network analysis
             self.analyze_network()
             
@@ -1149,7 +1171,7 @@ class VitreosArchitect(QMainWindow):
             self.update_ui()
             
         except Exception as e:
-            print(f"Advanced monitoring error: {e}")
+            logger.error(f"Advanced monitoring error: {e}")
             
     def get_advanced_temperatures(self):
         """Get advanced temperature data"""
@@ -1177,6 +1199,7 @@ class VitreosArchitect(QMainWindow):
         try:
             pynvml.nvmlInit()
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            logger.info("GPU initialized successfully")
             
             # Temperature
             temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
@@ -1198,9 +1221,11 @@ class VitreosArchitect(QMainWindow):
                 self.stats.gpu_fan_speed = fan_speed
             except (AttributeError, TypeError):
                 self.stats.gpu_fan_speed = 0
+            
+            logger.debug(f"Hardware check - GPU Temp: {self.stats.gpu_temp}°C, GPU Usage: {self.stats.gpu_usage}%, VRAM: {self.stats.gpu_vram_percent:.1f}%")
                 
         except Exception as e:
-            print(f"GPU monitoring error: {e}")
+            logger.error(f"GPU monitoring error: {e}")
             # Fallback values
             self.stats.gpu_temp = self.stats.cpu_temp + 5.0
             self.stats.gpu_usage = self.stats.cpu_usage
@@ -1513,6 +1538,7 @@ class VitreosArchitect(QMainWindow):
         
     def closeEvent(self, event):
         """Handle window close event"""
+        logger.info("Closing application")
         self.is_running = False
         self.security_monitor.monitoring_active = False
         self.save_config()
@@ -1520,6 +1546,7 @@ class VitreosArchitect(QMainWindow):
 
 def main():
     """Main application entry point"""
+    logger.info("Starting Vitreos Architect")
     app = QApplication(sys.argv)
     
     # Set application style
@@ -1528,8 +1555,12 @@ def main():
     # Create and show main window
     window = VitreosArchitect()
     window.show()
+    logger.info("Application window displayed - ready for user interaction")
     
     sys.exit(app.exec())
 
 if __name__ == '__main__':
+    logger.info("=" * 60)
+    logger.info("Vitreos - High-End System Sentinel")
+    logger.info("=" * 60)
     main()
