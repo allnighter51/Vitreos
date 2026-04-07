@@ -485,7 +485,10 @@ class VitreosArchitect(QMainWindow):
         
     def center_window(self):
         """Center window on screen"""
-        screen = QApplication.primaryScreen().geometry()
+        primary_screen = QApplication.primaryScreen()
+        if primary_screen is None:
+            return
+        screen = primary_screen.geometry()
         window = self.geometry()
         x = int((screen.width() - window.width()) / 2)
         y = int((screen.height() - window.height()) / 2)
@@ -765,7 +768,9 @@ class VitreosArchitect(QMainWindow):
         self.hogs_table = QTableWidget()
         self.hogs_table.setColumnCount(2)
         self.hogs_table.setHorizontalHeaderLabels(["Process", "Connections"])
-        self.hogs_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header = self.hogs_table.horizontalHeader()
+        if header is not None:
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.hogs_table.setStyleSheet("""
             QTableWidget {
                 background-color: rgba(255, 255, 255, 0.05);
@@ -880,7 +885,9 @@ class VitreosArchitect(QMainWindow):
         self.events_table = QTableWidget()
         self.events_table.setColumnCount(4)
         self.events_table.setHorizontalHeaderLabels(["Time", "Type", "Description", "Severity"])
-        self.events_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header = self.events_table.horizontalHeader()
+        if header is not None:
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.events_table.setStyleSheet("""
             QTableWidget {
                 background-color: rgba(255, 255, 255, 0.05);
@@ -1148,7 +1155,7 @@ class VitreosArchitect(QMainWindow):
         """Get advanced temperature data"""
         try:
             if hasattr(psutil, "sensors_temperatures"):
-                temps = psutil.sensors_temperatures()
+                temps = psutil.sensors_temperatures()  # type: ignore
                 if 'coretemp' in temps:
                     self.stats.cpu_temp = temps['coretemp'][0].current
                 elif 'cpu_thermal' in temps:
@@ -1173,13 +1180,13 @@ class VitreosArchitect(QMainWindow):
             
             # Usage
             utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
-            self.stats.gpu_usage = utilization.gpu
+            self.stats.gpu_usage = float(utilization.gpu)
             
             # VRAM
             memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            self.stats.gpu_vram_used = memory.used / 1024 / 1024 / 1024  # GB
-            self.stats.gpu_vram_total = memory.total / 1024 / 1024 / 1024  # GB
-            self.stats.gpu_vram_percent = (memory.used / memory.total) * 100
+            self.stats.gpu_vram_used = float(memory.used) / 1024 / 1024 / 1024  # GB
+            self.stats.gpu_vram_total = float(memory.total) / 1024 / 1024 / 1024  # GB
+            self.stats.gpu_vram_percent = (float(memory.used) / float(memory.total)) * 100
             
             # Fan speed
             try:
