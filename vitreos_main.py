@@ -32,6 +32,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Resource path helper for PyInstaller bundles
+def resource_path(relative_path):
+    """Get absolute path to resource, works in development and PyInstaller bundles"""
+    if hasattr(sys, '_MEIPASS'):
+        # Running as PyInstaller bundle
+        return os.path.join(sys._MEIPASS, relative_path)
+    # Running as script in development
+    return os.path.join(os.path.abspath("."), relative_path)
+
 try:
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                 QLabel, QPushButton, QFrame, QGridLayout, QScrollArea,
@@ -68,6 +77,8 @@ class SystemStats:
     gpu_vram_total: float = 0.0
     gpu_vram_percent: float = 0.0
     gpu_fan_speed: float = 0.0
+    gpu_power_draw: float = 0.0
+    thermal_prediction: float = 0.0
     ram_usage: float = 0.0
     disk_usage: float = 0.0
     network_speed: float = 0.0
@@ -464,6 +475,8 @@ class HardwareMonitorWorker(QObject):
         super().__init__()
         self.is_running = False
         self.gpu_handle = None
+        # Thermal prediction: store last 5 CPU temp readings
+        self.cpu_temp_history = deque(maxlen=5)
         
     def setup_gpu(self):
         """Initialize GPU handle once"""
@@ -533,6 +546,51 @@ class HardwareMonitorWorker(QObject):
             logger.error(f"Error collecting advanced GPU data: {e}")
         
         return gpu_data
+    
+    def calculate_thermal_prediction(self, current_temp: float) -> float:
+        """
+        Calculate predicted CPU temperature 30 seconds from now based on trend.
+        Uses last 5 readings to calculate trend slope.
+        """
+        try:
+            # Add current reading to history
+            self.cpu_temp_history.append(current_temp)
+            
+            # Need at least 2 readings to calculate trend
+            if len(self.cpu_temp_history) < 2:
+                return current_temp  # Return current if not enough history
+            
+            # Calculate simple linear trend: (temp_now - temp_oldest) / time_points
+            temps = list(self.cpu_temp_history)
+            n = len(temps)
+            
+            # Calculate trend using least squares regression
+            x_values = list(range(n))  # Time points [0, 1, 2, 3, 4]
+            
+            sum_x = sum(x_values)
+            sum_y = sum(temps)
+            sum_xy = sum(x * y for x, y in zip(x_values, temps))
+            sum_x2 = sum(x * x for x in x_values)
+            
+            # Slope calculation: (n*sum_xy - sum_x*sum_y) / (n*sum_x2 - sum_x^2)
+            denominator = n * sum_x2 - sum_x * sum_x
+            if denominator == 0:
+                return current_temp  # No trend
+            
+            slope = (n * sum_xy - sum_x * sum_y) / denominator
+            
+            # Predict temperature at t=30 seconds (we update every 2 seconds, so 15 time units ahead)
+            # Assuming roughly 2-second intervals between readings
+            predicted_temp = current_temp + (slope * 15)
+            
+            # Clamp to reasonable range (shouldn't jump more than 20°C in 30 seconds)
+            predicted_temp = max(current_temp - 5, min(predicted_temp, current_temp + 20))
+            
+            return round(predicted_temp, 1)
+            
+        except Exception as e:
+            logger.error(f"Error calculating thermal prediction: {e}")
+            return current_temp
     
     def collect_storage_data(self) -> Dict[str, Any]:
         """Collect storage and disk I/O statistics"""
@@ -621,6 +679,9 @@ class HardwareMonitorWorker(QObject):
                     logger.error(f"Temperature reading error in worker: {e}")
                     stats_dict['cpu_temp'] = 45.0
                 
+                # Thermal Prediction (based on temperature trend)
+                stats_dict['thermal_prediction'] = float(self.calculate_thermal_prediction(stats_dict['cpu_temp']))
+                
                 # GPU data
                 if NVML_AVAILABLE and self.gpu_handle is not None:
                     try:
@@ -641,24 +702,36 @@ class HardwareMonitorWorker(QObject):
                         
                         # Fan speed
                         try:
-                            stats_dict['gpu_fan_speed'] = float(pynvml.nvmlDeviceGetFanSpeed(handle))
-                        except (AttributeError, TypeError):
+                            fan_speed = pynvml.nvmlDeviceGetFanSpeed(handle)
+                            stats_dict['gpu_fan_speed'] = float(fan_speed)
+                        except Exception as e:
+                            logger.error(f"GPU fan speed error: {e}")
                             stats_dict['gpu_fan_speed'] = 0.0
                         
-                        logger.debug(f"Hardware check - GPU Temp: {stats_dict['gpu_temp']}°C, GPU Usage: {stats_dict['gpu_usage']}%, VRAM: {stats_dict['gpu_vram_percent']:.1f}%")
+                        # Power Draw (milliwatts -> watts)
+                        try:
+                            power_mw = pynvml.nvmlDeviceGetPowerUsage(handle)
+                            stats_dict['gpu_power_draw'] = float(power_mw) / 1000.0  # Convert mW to W
+                        except Exception as e:
+                            logger.error(f"GPU power draw error: {e}")
+                            stats_dict['gpu_power_draw'] = 0.0
+                        
+                        logger.debug(f"Hardware check - GPU Temp: {stats_dict['gpu_temp']}°C, GPU Usage: {stats_dict['gpu_usage']}%, VRAM: {stats_dict['gpu_vram_percent']:.1f}%, Fan: {stats_dict['gpu_fan_speed']}%")
                     except Exception as e:
                         logger.error(f"GPU monitoring error in worker: {e}")
                         # Fallback values
                         stats_dict['gpu_temp'] = float(stats_dict.get('cpu_temp', 45.0) + 5.0)
                         stats_dict['gpu_usage'] = float(stats_dict.get('cpu_usage', 0))
                         stats_dict['gpu_vram_percent'] = 30.0
-                        stats_dict['gpu_fan_speed'] = 50.0
+                        stats_dict['gpu_fan_speed'] = 0.0
+                        stats_dict['gpu_power_draw'] = 0.0
                 else:
                     # Fallback values if GPU not available
                     stats_dict['gpu_temp'] = float(stats_dict.get('cpu_temp', 45.0) + 5.0)
                     stats_dict['gpu_usage'] = float(stats_dict.get('cpu_usage', 0))
                     stats_dict['gpu_vram_percent'] = 30.0
-                    stats_dict['gpu_fan_speed'] = 50.0
+                    stats_dict['gpu_fan_speed'] = 0.0
+                    stats_dict['gpu_power_draw'] = 0.0
                 
                 logger.debug(f"Hardware check - CPU: {stats_dict['cpu_usage']:.1f}%, RAM: {stats_dict['ram_usage']:.1f}%, Disk: {stats_dict['disk_usage']:.1f}%, CPU Temp: {stats_dict['cpu_temp']:.1f}°C")
                 
@@ -749,8 +822,14 @@ class VitreosArchitect(QMainWindow):
         self.setGeometry(100, 100, 1400, 900)
         self.setMinimumSize(1200, 700)
         
-        # Set window icon
-        self.setWindowIcon(QIcon.fromTheme("system-monitor"))
+        # Set window icon from resource path
+        icon_path = resource_path("logo.ico")
+        window_icon = QIcon(icon_path)
+        if not window_icon.isNull():
+            self.setWindowIcon(window_icon)
+        else:
+            # Fallback to system theme
+            self.setWindowIcon(QIcon.fromTheme("system-monitor"))
         
         # Remove window frame for true glass effect
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
@@ -773,13 +852,20 @@ class VitreosArchitect(QMainWindow):
             # Create tray icon
             self.tray_icon = QSystemTrayIcon(self)
             
-            # Set icon - use a simple circle icon as fallback
-            icon = QIcon.fromTheme("vitreos-icon")
+            # Load icon from resource path (works in PyInstaller bundles)
+            icon_path = resource_path("logo.ico")
+            icon = QIcon(icon_path)
+            
+            # Fallback to theme or colored pixmap if resource not found
             if icon.isNull():
-                # Create a simple colored pixmap as fallback
+                icon = QIcon.fromTheme("vitreos-icon")
+            
+            if icon.isNull():
+                # Create a simple colored pixmap as last resort
                 pixmap = QPixmap(64, 64)
                 pixmap.fill(QColor(0, 242, 255))  # Cyan color
                 icon = QIcon(pixmap)
+            
             self.tray_icon.setIcon(icon)
             
             # Create context menu
@@ -1979,12 +2065,14 @@ class VitreosArchitect(QMainWindow):
             self.stats.ram_usage = stats_dict.get('ram_usage', 0)
             self.stats.disk_usage = stats_dict.get('disk_usage', 0)
             self.stats.cpu_temp = stats_dict.get('cpu_temp', 45.0)
+            self.stats.thermal_prediction = stats_dict.get('thermal_prediction', 45.0)
             self.stats.gpu_temp = stats_dict.get('gpu_temp', 0)
             self.stats.gpu_usage = stats_dict.get('gpu_usage', 0)
             self.stats.gpu_vram_used = stats_dict.get('gpu_vram_used', 0)
             self.stats.gpu_vram_total = stats_dict.get('gpu_vram_total', 0)
             self.stats.gpu_vram_percent = stats_dict.get('gpu_vram_percent', 0)
             self.stats.gpu_fan_speed = stats_dict.get('gpu_fan_speed', 0)
+            self.stats.gpu_power_draw = stats_dict.get('gpu_power_draw', 0)
             
             # Update UI
             self.update_ui()
@@ -2194,15 +2282,20 @@ class VitreosArchitect(QMainWindow):
         self.disk_card.update_value(self.stats.disk_usage, "%", disk_status, disk_color)
         
         # Update Power card
-        power_status, power_color = self.get_status_and_color(self.stats.power_draw, 150, 250)
-        self.power_card.update_value(self.stats.power_draw, "W", power_status, power_color)
+        power_status, power_color = self.get_status_and_color(self.stats.gpu_power_draw, 150, 250)
+        self.power_card.update_value(self.stats.gpu_power_draw, "W", power_status, power_color)
         
-        # Update Predictive card
-        prediction = self.predictive_alert.predict_throttling_time()
-        if prediction and prediction < 300:  # Less than 5 minutes
-            self.predictive_card.update_value(prediction, "s", "WARNING", "#ffd700")
-        else:
-            self.predictive_card.update_value(0, "s", "STABLE", "#4ade80")
+        # Update Predictive card (show predicted temperature)
+        pred_status = "STABLE"
+        pred_color = "#4ade80"
+        if self.stats.thermal_prediction >= 85:
+            pred_status = "CRITICAL"
+            pred_color = "#ff4444"
+        elif self.stats.thermal_prediction >= 75:
+            pred_status = "WARNING"
+            pred_color = "#ffd700"
+        
+        self.predictive_card.update_value(self.stats.thermal_prediction, "°C", pred_status, pred_color)
         
         # Update Security events table
         self.update_security_events_table()
@@ -2507,6 +2600,12 @@ def main():
     sys.exit(app.exec())
 
 if __name__ == '__main__':
+    # Set application user model ID for Windows taskbar integration
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("cce.vitreos.sentinel.1.0")
+    except Exception as e:
+        logger.warning(f"Could not set app user model ID: {e}")
+    
     logger.info("=" * 60)
     logger.info("Vitreos - High-End System Sentinel")
     logger.info("=" * 60)
