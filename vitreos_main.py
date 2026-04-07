@@ -456,6 +456,10 @@ class VitreosArchitect(QMainWindow):
         self.stats = SystemStats()
         self.config = self.load_config()
         
+        # GPU state - will be initialized asynchronously
+        self.gpu_handle = None
+        self.gpu_initialized = False
+        
         # Advanced monitoring systems
         self.security_monitor = SecurityMonitor()
         self.network_analyzer = NetworkAnalyzer()
@@ -1112,12 +1116,28 @@ class VitreosArchitect(QMainWindow):
         # Load configuration
         self.webhook_input.setText(self.config.get('webhook_url', ''))
         
+        # Schedule GPU initialization asynchronously (100ms after UI is shown)
+        if NVML_AVAILABLE:
+            QTimer.singleShot(100, self.init_gpu_async)
+        
         # Start monitoring timer
         self.monitoring_timer = QTimer()
         self.monitoring_timer.timeout.connect(self.update_monitoring)
         self.monitoring_timer.start(2000)  # Update every 2 seconds
         
         self.is_running = True
+        
+    def init_gpu_async(self):
+        """Initialize GPU asynchronously without blocking UI"""
+        try:
+            pynvml.nvmlInit()
+            self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            self.gpu_initialized = True
+            logger.info("GPU initialized successfully")
+        except Exception as e:
+            logger.error(f"GPU initialization error: {e}")
+            self.gpu_handle = None
+            self.gpu_initialized = False
         
     def update_monitoring(self):
         """Update all advanced monitoring data"""
@@ -1196,10 +1216,16 @@ class VitreosArchitect(QMainWindow):
             
     def get_gpu_data(self):
         """Get advanced GPU data using pynvml"""
+        if not self.gpu_initialized or self.gpu_handle is None:
+            # GPU not yet initialized, use fallback values
+            self.stats.gpu_temp = self.stats.cpu_temp + 5.0
+            self.stats.gpu_usage = self.stats.cpu_usage
+            self.stats.gpu_vram_percent = 30.0
+            self.stats.gpu_fan_speed = 50.0
+            return
+            
         try:
-            pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            logger.info("GPU initialized successfully")
+            handle = self.gpu_handle
             
             # Temperature
             temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
