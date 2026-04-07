@@ -485,19 +485,19 @@ class VitreosArchitect(QMainWindow):
         
     def center_window(self):
         """Center window on screen"""
-        primary_screen = QApplication.primaryScreen()
-        if primary_screen is None:
-            return
-        screen = primary_screen.geometry()
-        window = self.geometry()
-        x = int((screen.width() - window.width()) / 2)
-        y = int((screen.height() - window.height()) / 2)
-        self.move(x, y)
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            screen_geometry = screen.geometry()
+            window = self.geometry()
+            x = int((screen_geometry.width() - window.width()) / 2)
+            y = int((screen_geometry.height() - window.height()) / 2)
+            self.move(x, y)
         
     def setup_ui(self):
         """Setup the main user interface with tabs"""
         # Main widget and layout
         main_widget = QWidget()
+        main_widget.setStyleSheet("background-color: rgba(15, 15, 25, 200);")
         main_layout = QVBoxLayout(main_widget)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
@@ -1155,8 +1155,12 @@ class VitreosArchitect(QMainWindow):
         """Get advanced temperature data"""
         try:
             if hasattr(psutil, "sensors_temperatures"):
-                temps = psutil.sensors_temperatures()  # type: ignore
-                if 'coretemp' in temps:
+                temps_fn = getattr(psutil, "sensors_temperatures", None)
+                if temps_fn is not None:
+                    temps = temps_fn()
+                else:
+                    temps = None
+                if temps and 'coretemp' in temps:
                     self.stats.cpu_temp = temps['coretemp'][0].current
                 elif 'cpu_thermal' in temps:
                     self.stats.cpu_temp = temps['cpu_thermal'][0].current
