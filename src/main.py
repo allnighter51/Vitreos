@@ -5,7 +5,7 @@ import warnings
 import importlib
 import psutil
 from datetime import datetime, UTC
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
 import os # Added for path manipulation
 import sys # Added for sys.path manipulation
@@ -19,17 +19,19 @@ if project_root not in sys.path:
 # Import the new config loaders
 try:
     import requests
+    from requests import Response
 except ImportError:
-    requests = None
+    requests = None  # type: ignore
+    Response = None  # type: ignore
 
 try:
-    import win32evtlog
-    from win32evtlog import EVENTLOG_FORWARDS_READ, EVENTLOG_SEQUENTIAL_READ, EVENTLOG_BACKWARDS_READ, EVENT_ID_LOGON_FAILURE, EVENT_ID_LOGON_TYPE_INTERACTIVE
+    import win32evtlog  # type: ignore
+    from win32evtlog import EVENTLOG_FORWARDS_READ, EVENTLOG_SEQUENTIAL_READ, EVENTLOG_BACKWARDS_READ, EVENT_ID_LOGON_FAILURE, EVENT_ID_LOGON_TYPE_INTERACTIVE  # type: ignore
 except ImportError:
-    win32evtlog = None
+    win32evtlog = None  # type: ignore
 
-from ..config.settings import load_settings as load_app_settings
-from ..config.webhooks import some_function
+from config.settings import load_settings as load_app_settings  # type: ignore
+from config.webhooks import load_webhook_configs  # type: ignore
 
 
 class DiscordBridge:
@@ -44,8 +46,9 @@ class DiscordBridge:
         """Load current Discord message ID from settings file."""
         try:
             with open(self.settings_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                message_id = data.get('discord', {}).get('message_id')
+                data: Dict[str, Any] = json.load(f)
+                discord_data: Dict[str, Any] = data.get('discord', {})
+                message_id: Optional[str] = discord_data.get('message_id')
                 if message_id:
                     print(f"Loaded existing Discord message ID: {message_id}")
                 return message_id
@@ -64,7 +67,7 @@ class DiscordBridge:
         """Save updated message ID back to settings file."""
         try:
             with open(self.settings_path, 'r') as f:
-                data = json.load(f)
+                data: Dict[str, Any] = json.load(f)
             
             if 'discord' not in data:
                 data['discord'] = {}
@@ -79,16 +82,19 @@ class DiscordBridge:
         except Exception as e: # Catch other potential file I/O errors
             print(f"An unexpected error occurred while saving message ID: {e}")
 
-    def _post_new_embed(self, embed_data: dict) -> Optional[str]:
+    def _post_new_embed(self, embed_data: Dict[str, Any]) -> Optional[str]:
         """POST a new message and return its ID."""
+        if not requests:
+            return None
         try:
-            response = requests.post(
+            response: Response = requests.post(
                 self.webhook_url,
                 json={'embeds': [embed_data]}
             )
             response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
             
-            new_id = response.json()['id']
+            response_data: Dict[str, Any] = response.json()
+            new_id: str = response_data['id']
             self.save_message_id(new_id)
             return new_id
         except requests.exceptions.RequestException as e:
@@ -97,7 +103,7 @@ class DiscordBridge:
             print(f"Failed to decode JSON response after POST.")
         return None
 
-    def update_embed(self, embed_data: dict) -> Optional[str]:
+    def update_embed(self, embed_data: Dict[str, Any]) -> Optional[str]:
         """PATCH an existing message or POST a new one if no ID exists/PATCH fails."""
         if not requests:
             print("Requests library not available. Cannot send Discord updates.")
@@ -105,7 +111,7 @@ class DiscordBridge:
 
         if self.current_message_id:
             try:
-                response = requests.patch(
+                response: Response = requests.patch(
                     f"{self.webhook_url}/messages/{self.current_message_id}",
                     json={'embeds': [embed_data]}
                 )
@@ -117,19 +123,16 @@ class DiscordBridge:
         
         # If no current_message_id or PATCH failed, try to POST a new message
         return self._post_new_embed(embed_data)
-        
-        return None
 
 
 # Global state
-heartbeat_event = threading.Event()
-discord_bridge = None
-last_security_event_time = 0.0
+heartbeat_event: threading.Event = threading.Event()
+discord_bridge: Optional['DiscordBridge'] = None
+last_security_event_time: float = 0.0
 
-def heartbeat_loop(bridge: Optional[DiscordBridge]):
+def heartbeat_loop(bridge: Optional['DiscordBridge']) -> None:
     """Main monitoring loop with patched Discord updates."""
     global discord_bridge
-    global last_security_event_check_time # Added in previous diff
     
     print("Initializing monitors...")
     
@@ -155,7 +158,7 @@ def heartbeat_loop(bridge: Optional[DiscordBridge]):
                     print(f"Updated Discord heartbeat at {datetime.now().strftime('%H:%M:%S')}")
             
             # CPU monitoring check (every 3s via heartbeat)
-            if 'embed_data' in locals():
+            if 'embed_data' in locals() and embed_data is not None:
                 _check_cpu_threshold(cpu_pct, embed_data)
             
         except Exception as e:
@@ -164,7 +167,7 @@ def heartbeat_loop(bridge: Optional[DiscordBridge]):
         time.sleep(0.1)
 
 
-def _build_initial_embed(cpu_pct: float) -> dict:
+def _build_initial_embed(cpu_pct: float) -> Dict[str, Any]:
     """Create the initial Discord embed structure."""
     return {
         "title": "Vitreos System Monitor",
@@ -187,9 +190,9 @@ def _build_initial_embed(cpu_pct: float) -> dict:
     }
 
 
-def _build_embed(initial: dict, current_time: float, cpu_pct: float) -> dict:
+def _build_embed(initial: Dict[str, Any], current_time: float, cpu_pct: float) -> Dict[str, Any]:
     """Build full embed with real-time data."""
-    gpu = _get_gpu_stats_bundle()
+    gpu: Dict[str, str] = _get_gpu_stats_bundle()
 
     return {
         "title": "Vitreos System Monitor",
@@ -209,9 +212,9 @@ def _build_embed(initial: dict, current_time: float, cpu_pct: float) -> dict:
     }
 
 
-def _get_gpu_stats_bundle() -> dict:
+def _get_gpu_stats_bundle() -> Dict[str, str]:
     """Collect GPU stats in one NVML session to reduce overhead."""
-    result = {"vram": "N/A", "temp": "N/A", "fan": "N/A"}
+    result: Dict[str, str] = {"vram": "N/A", "temp": "N/A", "fan": "N/A"}
     try:
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -219,15 +222,15 @@ def _get_gpu_stats_bundle() -> dict:
                 message="The pynvml package is deprecated.*",
                 category=FutureWarning,
             )
-            pynvml = importlib.import_module("pynvml")
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            pynvml = importlib.import_module("pynvml")  # type: ignore
+        pynvml.nvmlInit()  # type: ignore
+        handle: Any = pynvml.nvmlDeviceGetHandleByIndex(0)  # type: ignore
 
-        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        percent = (info.used / info.total * 100) if info.total > 0 else 0
+        info: Any = pynvml.nvmlDeviceGetMemoryInfo(handle)  # type: ignore
+        percent: float = (info.used / info.total * 100) if info.total > 0 else 0
 
-        temp = pynvml.nvmlDeviceGetTemperature(handle, 0)
-        fan = pynvml.nvmlDeviceGetFanSpeed(handle)
+        temp: int = pynvml.nvmlDeviceGetTemperature(handle, 0)  # type: ignore
+        fan: int = pynvml.nvmlDeviceGetFanSpeed(handle)  # type: ignore
 
         result["vram"] = f"{percent:.1f}%"
         result["temp"] = f"{temp:.1f}°C"
@@ -236,14 +239,14 @@ def _get_gpu_stats_bundle() -> dict:
         return result
     finally:
         try:
-            import pynvml
-            pynvml.nvmlShutdown()
+            import pynvml  # type: ignore
+            pynvml.nvmlShutdown()  # type: ignore
         except Exception:
             pass # Ignore errors during shutdown
     return result
 
 
-def _check_security_events():
+def _check_security_events() -> None:
     """
     Checks Windows Event Log for failed login attempts.
     Updates last_security_event_time if an event is found.
@@ -256,22 +259,22 @@ def _check_security_events():
 
     try:
         # Open the Security event log
-        hand = win32evtlog.OpenEventLog(None, "Security")
-        flags = EVENTLOG_BACKWARDS_READ | EVENTLOG_SEQUENTIAL_READ
+        hand: Any = win32evtlog.OpenEventLog(None, "Security")  # type: ignore
+        flags: int = EVENTLOG_BACKWARDS_READ | EVENTLOG_SEQUENTIAL_READ  # type: ignore
         
         # Read up to the last 100 records (adjust as needed)
-        events = win32evtlog.ReadEventLog(hand, flags, 0, 100)
+        events: List[Any] = win32evtlog.ReadEventLog(hand, flags, 0, 100)  # type: ignore
         
         for event in events:
             # Event ID 4625 is for failed logins
-            if event.EventID == 4625:
+            if event.EventID == 4625:  # type: ignore
                 # Check if it's an interactive login failure (Type 2, 10, 11)
                 # This part requires parsing event.StringInserts, which is more complex.
                 # For simplicity, we'll just mark any 4625 as a security event for now.
                 last_security_event_time = time.time()
                 print(f"[SECURITY ALERT] Failed login attempt detected at {datetime.fromtimestamp(last_security_event_time).strftime('%H:%M:%S')}")
                 break # Only need to find one recent event
-        win32evtlog.CloseEventLog(hand)
+        win32evtlog.CloseEventLog(hand)  # type: ignore
     except Exception as e:
         print(f"[ERROR] Failed to check security events: {e}")
 
@@ -291,14 +294,14 @@ def get_security_status() -> str:
     return f"{minutes}m {seconds}s since last event | Last: {datetime.fromtimestamp(last_security_event_time).strftime('%H:%M:%S')}"
 
 
-def _check_cpu_threshold(cpu_pct: float, embed_data: dict):
+def _check_cpu_threshold(cpu_pct: float, embed_data: Dict[str, Any]) -> None:
     """Apply color logic and check thresholds."""
     global heartbeat_event
     
-    safe = 0x00FF00
-    warning = 0xFFA500
-    critical = 0xFF0000
-    alert_triggered = False
+    safe: int = 0x00FF00
+    warning: int = 0xFFA500
+    critical: int = 0xFF0000
+    alert_triggered: bool = False
     
     if cpu_pct > 90:
         embed_data['description'] = f"<@everyone> CRITICAL: High CPU usage detected: {cpu_pct:.1f}%"
@@ -315,7 +318,7 @@ def _check_cpu_threshold(cpu_pct: float, embed_data: dict):
         embed_data['color'] = critical
         embed_data['description'] += f" • Last update: {datetime.now().strftime('%H:%M:%S')}"
 
-def start_monitors(): # No arguments needed anymore
+def start_monitors() -> None:
     """Entry point for Vitreos monitoring service."""
     
     # Load application settings and webhook configurations
@@ -323,20 +326,21 @@ def start_monitors(): # No arguments needed anymore
     # these functions expect 'settings.json' and 'webhooks.json' to be in the current working directory.
     # If your config files are in a 'config/' subdirectory, these calls will likely fail to find them
     # unless the CWD is changed or the config modules are modified.
-    app_settings = load_app_settings()
-    webhook_configs = load_webhook_configs()
+    app_settings: Dict[str, Any] = load_app_settings()
+    webhook_configs: Dict[str, Any] = load_webhook_configs()
 
     # Determine the Discord webhook URL from app_settings (prioritizing nested then flat)
-    discord_webhook_url = (
-        app_settings.get('discord', {}).get('webhook_url', '')
+    discord_data: Dict[str, Any] = app_settings.get('discord', {})
+    discord_webhook_url: str = (
+        discord_data.get('webhook_url', '')
         or app_settings.get('webhook_url', '')
     )
 
     # The path for DiscordBridge to save its message_id.
     # This path is relative to the project root, where src/main.py is expected to be run from.
-    discord_bridge_settings_path = os.path.join(project_root, 'config', 'settings.json')
+    discord_bridge_settings_path: str = os.path.join(project_root, 'config', 'settings.json')
 
-    discord_bridge_instance = None
+    discord_bridge_instance: Optional[DiscordBridge] = None
     if discord_webhook_url:
         discord_bridge_instance = DiscordBridge(discord_webhook_url, discord_bridge_settings_path)
     
@@ -346,7 +350,7 @@ def start_monitors(): # No arguments needed anymore
     print("-" * 60)
     
     heartbeat_event.set() # Set the event before starting the thread
-    t = threading.Thread(target=heartbeat_loop, args=(discord_bridge_instance,)) # Pass only the bridge instance
+    t: threading.Thread = threading.Thread(target=heartbeat_loop, args=(discord_bridge_instance,)) # Pass only the bridge instance
     t.daemon = True
     t.start()
     
@@ -363,7 +367,7 @@ def start_monitors(): # No arguments needed anymore
         heartbeat_event.clear()
 
 
-def run_cli_loop(): # No arguments needed
+def run_cli_loop() -> None:
     """CLI-compatible loop (press Ctrl+C to exit)."""
     start_monitors()
 

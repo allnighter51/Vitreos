@@ -16,30 +16,43 @@ import platform
 import winreg
 import subprocess
 import ctypes
-import ctypes.wintypes
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Deque, TYPE_CHECKING, Union, cast
 from collections import deque
 import statistics
-from io import StringIO
+
+# TYPE_CHECKING block for strict mode compliance
+if TYPE_CHECKING:
+    from PyQt6.QtCore import Qt, QTimer, QPoint, pyqtSignal, QThread, QObject, QEvent
+    from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+                                QLabel, QPushButton, QFrame, QGridLayout,
+                                QTextEdit, QLineEdit, QCheckBox, QGroupBox,
+                                QProgressBar, QSystemTrayIcon, QMenu,
+                                QStatusBar, QMessageBox, QDialog,
+                                QTableWidget, QTableWidgetItem, QHeaderView, QPlainTextEdit)
+    from PyQt6.QtGui import (QIcon, QPixmap, QPalette, QColor,
+                           QLinearGradient, QBrush, QPainter, QPen,
+                           QPaintEvent, QMouseEvent, QCloseEvent, QFont)
+    import pynvml  # type: ignore
 
 # PyQt imports first (before logging handler definition)
+PYQT6_AVAILABLE: bool = False
 try:
-    from PyQt6.QtCore import Qt, QTimer, QSize, QPoint, QPropertyAnimation, QEasingCurve, pyqtSignal, QThread, QObject
+    from PyQt6.QtCore import Qt, QTimer, QPoint, pyqtSignal, QThread, QObject, QEvent
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                                QLabel, QPushButton, QFrame, QGridLayout, QScrollArea,
-                                QTextEdit, QLineEdit, QComboBox, QCheckBox, QGroupBox,
-                                QProgressBar, QSystemTrayIcon, QMenu, QMenuBar, QToolBar,
-                                QStatusBar, QMessageBox, QFileDialog, QDialog, QTabWidget,
+                                QLabel, QPushButton, QFrame, QGridLayout,
+                                QTextEdit, QLineEdit, QCheckBox, QGroupBox,
+                                QProgressBar, QSystemTrayIcon, QMenu,
+                                QStatusBar, QMessageBox, QDialog,
                                 QTableWidget, QTableWidgetItem, QHeaderView, QPlainTextEdit)
-    from PyQt6.QtGui import (QIcon, QPixmap, QPalette, QColor, QFont, QFontMetrics, 
-                           QLinearGradient, QBrush, QPainter, QPen, QRegion, QCursor)
-    from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-    PYQT6_AVAILABLE = True
+    from PyQt6.QtGui import (QIcon, QPixmap, QPalette, QColor,
+                           QLinearGradient, QBrush, QPainter, QPen,
+                           QPaintEvent, QMouseEvent, QCloseEvent, QFont)
+    PYQT6_AVAILABLE: bool = True  # type: ignore[no-redef]
 except ImportError:
-    PYQT6_AVAILABLE = False
+    pass
 
 # Configure logging BEFORE creating handler
 logging.basicConfig(
@@ -55,12 +68,12 @@ class UILoggingHandler(QObject, logging.Handler):
     
     log_signal = pyqtSignal(str)
     
-    def __init__(self):
+    def __init__(self) -> None:
         QObject.__init__(self)
         logging.Handler.__init__(self)
         self.setFormatter(logging.Formatter('%(levelname)-8s | %(message)s'))
     
-    def emit(self, record):
+    def emit(self, record: logging.LogRecord) -> None:
         """Format record and emit PyQt signal for UI thread to display"""
         try:
             msg = self.format(record)
@@ -78,21 +91,78 @@ ui_log_handler = UILoggingHandler()
 logger.addHandler(ui_log_handler)
 
 # Resource path helper for PyInstaller bundles
-def resource_path(relative_path):
+def resource_path(relative_path: str) -> str:
     """Get absolute path to resource, works in development and PyInstaller bundles"""
     base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))
     return os.path.join(base_path, relative_path)
 
 # Try to import advanced GPU monitoring
+NVML_AVAILABLE: bool = False
 try:
-    import pynvml
-    NVML_AVAILABLE = True
+    import pynvml  # type: ignore
+    NVML_AVAILABLE: bool = True  # type: ignore[no-redef]
     if PYQT6_AVAILABLE:
         logger.info("GPU monitoring (NVML) imports successful")
 except ImportError:
-    NVML_AVAILABLE = False
     if PYQT6_AVAILABLE:
         logger.warning("GPU monitoring (NVML) not available - using fallback mode")
+
+# Type alias for configuration dictionary
+ConfigDict = Dict[str, Union[str, bool]]
+# CCE Process Watchdog Blacklist
+BLACKLISTED_PROCESSES = [
+    'cheatengine-x86_64.exe',
+    'cheat engine.exe',
+    'wireshark.exe',
+    'x64dbg.exe',
+    'ollydbg.exe',
+    'ida.exe',
+    'ida64.exe',
+    'processhacker.exe'
+]
+
+# Smart Blocklists for Purge Protocol
+CRITICAL_SYSTEM_PROCESSES = {
+    'svchost.exe', 'explorer.exe', 'system', 'registry', 'smss.exe',
+    'csrss.exe', 'wininit.exe', 'services.exe', 'lsass.exe', 'winlogon.exe',
+    'fontdrvhost.exe', 'dwm.exe', 'spoolsv.exe', 'taskhostw.exe',
+    'runtimebroker.exe', 'searchapp.exe', 'startmenuexperiencehost.exe',
+    'sihost.exe', 'conhost.exe', 'cmd.exe', 'python.exe', 'pythonw.exe',
+    'system idle process', 'memory compression', 'wmiapsrv.exe',
+    'ctfmon.exe', 'securityhealthservice.exe', 'dashost.exe', 'dllhost.exe'
+}
+PROTECTED_APPS = {
+    'discord.exe', 'spotify.exe', 'steam.exe', 'steamwebhelper.exe',
+    'chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe',
+    'r5apex.exe', 'obs64.exe', 'code.exe', 'discordptb.exe', 'discordcanary.exe'
+}
+KNOWN_BLOATWARE = {
+    'lghub.exe', 'lghub_agent.exe', 'lghub_updater.exe', 'icue.exe',
+    'corsair.service.exe', 'corsair.service.displayadapter.exe', 
+    'synapse3.exe', 'razercentral.exe', 'rzsynapse.exe', 'rzsdkservice.exe',
+    'wallpaper32.exe', 'wallpaper64.exe', 'epicgameslauncher.exe',
+    'eadesktop.exe', 'eabackgroundservice.exe', 'battle.net.exe',
+    'agent.exe', 'riotclientservices.exe', 'gog galaxy.exe',
+    'overwolf.exe', 'overwolflauncher.exe', 'onedrive.exe',
+    'dropbox.exe', 'googledrivefs.exe', 'adobeupdate.exe', 
+    'creative cloud.exe', 'ccxprocess.exe', 'acrotray.exe', 'adobeipcbroker.exe',
+    'armourycrateservice.exe', 'lightingservice.exe', 'asuscertservice.exe', 
+    'gamingservices.exe', 'ccleaner.exe', 'mcafee.exe', 'norton.exe', 
+    'webex.exe', 'skype.exe', 'teams.exe', 'zoom.exe', 'yourphone.exe', 
+    'xboxapp.exe', 'gamebar.exe', 'nzxtcam.exe', 'cam_v4.exe',
+    'nahimic.exe', 'rtss.exe', 'originwebhelperui.exe', 'widgets.exe',
+    'msedgewebview2.exe', 'jusched.exe', 'steelseriesgg.exe', 'steelseriesengine.exe'
+}
+PERFORMANCE_TARGETS = {
+    'r5apex.exe', 'csgo.exe', 'valorant.exe', 'overwatch.exe', 
+    'cod.exe', 'photoshop.exe', 'premiere.exe', 'code.exe', 'devenv.exe'
+}
+EFFICIENCY_TARGETS = {
+    'discord.exe', 'spotify.exe', 'chrome.exe', 'firefox.exe', 
+    'msedge.exe', 'brave.exe', 'steam.exe', 'steamwebhelper.exe', 
+    'epicgameslauncher.exe', 'nvcontainer.exe', 'slack.exe'
+}
+
 
 @dataclass
 class SystemStats:
@@ -119,24 +189,74 @@ class SecurityEvent:
     description: str
     severity: str
 
+
+class SparklineWidget(QWidget):
+    """A compact widget for rendering sparkline graphs."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setMinimumHeight(40)
+        self.data: Deque[float] = deque(maxlen=60)
+
+    def add_point(self, value: float) -> None:
+        """Add a new data point and refresh the graph."""
+        self.data.append(value)
+        self.update()  # Trigger a repaint
+
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        """Render segmented LED progress bar with ghost background."""
+        if not self.data:
+            return
+        painter = QPainter(self)
+        rect = self.rect()
+        percentage = self.data[-1] / 100.0 if self.data else 0.0
+        
+        # Determine color based on value
+        value = self.data[-1]
+        active_color = QColor("#ff8c00") if value > 70 else QColor("#bc13fe")
+        ghost_color = QColor(188, 19, 254, 26)  # 10% opacity purple
+        
+        painter.setPen(Qt.PenStyle.NoPen)
+        
+        # Draw segments with 2px width and 1px gap
+        segment_width = 2
+        gap = 1
+        step = segment_width + gap
+        fill_width = int(rect.width() * percentage)
+        
+        for x in range(0, rect.width(), step):
+            if x + segment_width <= fill_width:
+                # Active segment
+                painter.setBrush(QBrush(active_color))
+            else:
+                # Ghost segment
+                painter.setBrush(QBrush(ghost_color))
+            painter.drawRect(x, 0, segment_width, rect.height())
+
 class LiquidGlassCard(QFrame):
     """Professional liquid glass card with physics-based styling"""
     
-    def __init__(self, title: str, parent=None):
+    def __init__(self, title: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.title = title
+        self.title: str = title
         self.setMinimumSize(200, 150)
         
         # Glass styling properties
-        self.glass_color = QColor(255, 255, 255, 12)  # rgba(255, 255, 255, 0.05) * 255
-        self.border_color = QColor(255, 255, 255, 25)  # rgba(255, 255, 255, 0.1) * 255
-        self.bevel_color = QColor(255, 255, 255, 25)   # Top-left inner shadow
+        self.glass_color: QColor = QColor(255, 255, 255, 12)
+        self.border_color: QColor = QColor(255, 255, 255, 25)
+        self.bevel_color: QColor = QColor(255, 255, 255, 25)
+        self.sparkline: SparklineWidget = SparklineWidget()
+        
+        # UI components - typed explicitly
+        self.title_label: QLabel
+        self.value_label: QLabel
+        self.unit_label: QLabel
+        self.status_label: QLabel
         
         self.setup_ui()
         
-    def setup_ui(self):
+    def setup_ui(self) -> None:
         """Setup the card layout and styling"""
-        layout = QVBoxLayout(self)
+        layout: QVBoxLayout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
         
@@ -188,53 +308,40 @@ class LiquidGlassCard(QFrame):
         layout.addWidget(self.value_label)
         layout.addWidget(self.unit_label)
         layout.addWidget(self.status_label)
+        layout.addWidget(self.sparkline)
         
         # Set frame properties for glass effect
         self.setFrameStyle(QFrame.Shape.StyledPanel)
         self.setAutoFillBackground(False)
         
-    def paintEvent(self, event):
-        """Custom paint event for liquid glass effect"""
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        """Segmented glass effect with 2px gaps."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Create glass gradient
-        gradient = QLinearGradient(0, 0, 0, self.height())
-        gradient.setColorAt(0, QColor(255, 255, 255, 20))    # Top: very light
-        gradient.setColorAt(0.5, QColor(255, 255, 255, 8))    # Middle: transparent
-        gradient.setColorAt(1, QColor(255, 255, 255, 15))     # Bottom: light
-        
-        # Draw main glass body
         rect = self.rect().adjusted(1, 1, -1, -1)
-        painter.setBrush(QBrush(gradient))
-        painter.setPen(QPen(self.border_color, 1))
+        painter.setPen(QPen(QColor(self.border_color), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRoundedRect(rect, 16, 16)
+        gradient = QLinearGradient(0, 0, 0, self.height())
+        gradient.setColorAt(0, QColor(255, 255, 255, 20))
+        gradient.setColorAt(1, QColor(255, 255, 255, 8))
+        painter.setBrush(QBrush(gradient))
+        for y in range(2, rect.height() - 2, 5):
+            painter.drawRect(2, y, rect.width() - 4, 3)
+        super().paintEvent(a0)
         
-        # Draw top-left bevel (inner shadow effect)
-        bevel_rect = rect.adjusted(2, 2, -2, -2)
-        painter.setPen(QPen(self.bevel_color, 1))
-        painter.drawRoundedRect(bevel_rect, 16, 16)
-        
-        # Draw floating shadow effect (blue/purple tint)
-        shadow_color = QColor(26, 26, 46, 80)  # #1a1a2e with transparency
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(shadow_color))
-        shadow_rect = rect.adjusted(0, 0, 0, 4)
-        painter.drawRoundedRect(shadow_rect, 16, 16)
-        
-        super().paintEvent(event)
-        
-    def update_value(self, value, unit: str = "", status: str = "Normal", color: str = "#00f2ff"):
+    def update_value(self, value: Union[float, int, str, None], unit: str = "", status: str = "Normal", color: str = "#00f2ff") -> None:
         """Update card with new values - handles float or string input"""
         try:
             # Convert value to float safely
             if isinstance(value, str):
-                val_float = float(value)
+                val_float: float = float(value)
             else:
                 val_float = float(value) if value is not None else 0.0
             
             # Format for display
             self.value_label.setText(f"{val_float:.1f}")
+            self.sparkline.add_point(val_float)
         except (ValueError, TypeError):
             self.value_label.setText(str(value) if value is not None else "0")
         
@@ -249,16 +356,916 @@ class LiquidGlassCard(QFrame):
             }}
         """)
 
+class CPUThreadMatrix(QWidget):
+    """4x4 CPU thread grid with segmented bars and PKG_TEMP greeble."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setMinimumSize(200, 200)
+        self.thread_loads: List[float] = [0.0] * 16
+        self.pkg_temp: float = 0.0
+        self.warning_active: bool = False
+        self.flicker_timer: QTimer = QTimer(self)
+        self.flicker_state: bool = False
+        self.flicker_timer.timeout.connect(self.toggle_flicker)  # type: ignore
+    
+    def update_threads(self, loads: List[float], temp: float) -> None:
+        self.thread_loads = loads[:16] if len(loads) >= 16 else loads + [0.0] * (16 - len(loads))
+        self.pkg_temp = temp
+        if temp >= 75 and not self.warning_active:
+            self.warning_active = True
+            self.flicker_timer.start(500)
+        elif temp < 75 and self.warning_active:
+            self.warning_active = False
+            self.flicker_timer.stop()
+        self.update()
+    
+    def toggle_flicker(self) -> None:
+        self.flicker_state = not self.flicker_state
+        self.update()
+    
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        """Render 4x4 CPU thread grid with vertical segmented LED bars."""
+        painter = QPainter(self)
+        rect = self.rect()
+        border_color = QColor("#ff8c00") if (self.warning_active and self.flicker_state) else QColor("#00f2ff")
+        painter.setPen(QPen(border_color, 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(rect.adjusted(1, 1, -1, -1))
+        
+        cell_w = rect.width() // 4
+        cell_h = rect.height() // 4
+        
+        # Draw each core as vertical segmented LED stack
+        for row in range(4):
+            for col in range(4):
+                idx = row * 4 + col
+                load = self.thread_loads[idx]
+                
+                # Cell position
+                x = col * cell_w + 5
+                y = row * cell_h + 5
+                bar_width = cell_w - 10
+                bar_height = cell_h - 10
+                
+                # Determine color based on load
+                active_color = QColor("#ff8c00") if load > 70 else QColor("#bc13fe")
+                ghost_color = QColor(188, 19, 254, 26)  # 10% opacity purple
+                
+                # Draw vertical segments (8 segments per core)
+                num_segments = 8
+                segment_height = 2
+                gap = 1
+                step = segment_height + gap
+                
+                filled_segments = int((load / 100.0) * num_segments)
+                
+                painter.setPen(Qt.PenStyle.NoPen)
+                
+                for seg in range(num_segments):
+                    seg_y = y + bar_height - (seg + 1) * step
+                    
+                    if seg < filled_segments:
+                        # Active segment
+                        painter.setBrush(QBrush(active_color))
+                    else:
+                        # Ghost segment
+                        painter.setBrush(QBrush(ghost_color))
+                    
+                    painter.drawRect(x, seg_y, bar_width, segment_height)
+        
+        # PKG_TEMP greeble
+        painter.setBrush(QBrush(QColor("#ff8c00")))
+        painter.drawRect(rect.width() - 80, 5, 75, 30)
+        painter.setPen(QPen(QColor("#ffffff")))
+        font: QFont = painter.font()
+        font.setPointSize(8)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(rect.width() - 75, 20, f"PKG {int(self.pkg_temp)}°C")
+
+class GPUCircularHUD(QWidget):
+    """Radial GPU usage gauge with segmented rings."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setMinimumSize(150, 150)
+        self.usage: float = 0.0
+        self.warning_active: bool = False
+        self.flicker_timer: QTimer = QTimer(self)
+        self.flicker_state: bool = False
+        self.flicker_timer.timeout.connect(self.toggle_flicker)  # type: ignore
+    
+    def update_usage(self, usage: float) -> None:
+        self.usage = usage
+        if usage >= 85 and not self.warning_active:
+            self.warning_active = True
+            self.flicker_timer.start(500)
+        elif usage < 85 and self.warning_active:
+            self.warning_active = False
+            self.flicker_timer.stop()
+        self.update()
+    
+    def toggle_flicker(self) -> None:
+        self.flicker_state = not self.flicker_state
+        self.update()
+    
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        """Render radial GPU usage gauge with segmented ring."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect()
+        center_x = rect.width() // 2
+        center_y = rect.height() // 2
+        radius = min(center_x, center_y) - 10
+        
+        # Determine color based on usage
+        ring_color = QColor("#ff8c00") if (self.warning_active and self.flicker_state) else (QColor("#ff8c00") if self.usage > 70 else QColor("#bc13fe"))
+        ghost_color = QColor(188, 19, 254, 26)  # 10% opacity purple
+        
+        # Draw ghost ring (background)
+        pen = QPen(ghost_color, 3)
+        pen.setDashPattern(cast(Any, [2, 4]))  # type: ignore[reportUnknownMemberType]
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(center_x - radius, center_y - radius, radius * 2, radius * 2)
+        
+        # Draw active arc
+        span_angle = int((self.usage / 100.0) * 360 * 16)
+        pen = QPen(ring_color, 3)
+        pen.setStyle(Qt.PenStyle.SolidLine)
+        painter.setPen(pen)
+        painter.drawArc(center_x - radius + 10, center_y - radius + 10, (radius - 10) * 2, (radius - 10) * 2, 90 * 16, -span_angle)
+        
+        # Center text
+        painter.setPen(QPen(ring_color))
+        font: QFont = painter.font()
+        font.setPointSize(14)
+        font.setFamily("Courier New")
+        painter.setFont(font)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"{int(self.usage)}%")
+
+class SystemPulseLog(QWidget):
+    """Hyper-dense Cyberdeck HUD sidebar with 1:1 Figma fidelity."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setFixedWidth(240)  # Increased from 220 to 240 for breathing room
+        self.log_messages: Deque[str] = deque(maxlen=100)
+        self.led_states: Dict[str, str] = {'CPU': '#bc13fe', 'MEM': '#bc13fe', 'GPU': '#ff8c00', 'NET': '#00ff00'}
+        self.setStyleSheet("background-color: #121214; border-right: 1px solid #2a2a2e;")
+        
+    def add_log(self, message: str) -> None:
+        """Add log with unified format: [TIMESTAMP] [TAG] MESSAGE"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        # Extract tag if present, otherwise default to INFO
+        if ' - ' in message and ' - ' in message:
+            parts = message.split(' - ', 1)
+            level = parts[0].strip()
+            msg_content = parts[1] if len(parts) > 1 else message
+            
+            # Map log levels to tags
+            tag_map = {
+                'INFO': '[INFO]',
+                'DEBUG': '[DEBUG]',
+                'WARNING': '[WARN]',
+                'ERROR': '[WARN]',
+                'CRITICAL': '[WARN]'
+            }
+            tag = tag_map.get(level, '[INFO]')
+        else:
+            # Parse existing tags from message
+            if '[' in message and ']' in message:
+                tag_start = message.find('[')
+                tag_end = message.find(']', tag_start)
+                if tag_end > tag_start:
+                    tag = message[tag_start:tag_end+1]
+                    msg_content = message[tag_end+1:].strip()
+                else:
+                    tag = '[INFO]'
+                    msg_content = message
+            else:
+                tag = '[INFO]'
+                msg_content = message
+        
+        # Unified format with fixed-width tag alignment
+        formatted_msg = f"[{timestamp}] {tag.ljust(7)} {msg_content}"
+        self.log_messages.append(formatted_msg)
+        self.update()
+    
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect()
+        painter.fillRect(rect, QColor("#121214"))
+        y_offset = 0
+        
+        # Sub-Header: ■ SYSTEM_PULSE.LOG and PID
+        painter.setPen(QColor(188, 19, 254, 153))
+        header_font: QFont = QFont("Consolas", 8)
+        painter.setFont(header_font)
+        painter.drawText(5, y_offset + 12, "■ SYSTEM_PULSE.LOG")
+        painter.drawText(rect.width() - 70, y_offset + 12, "PID: 31337")
+        y_offset += 18
+        
+        # Separator
+        painter.setPen(QColor("#2a2a2e"))
+        painter.drawLine(0, y_offset, rect.width(), y_offset)
+        y_offset += 8
+        
+        # Logo with Neon Glow and Scanlines (CENTERED)
+        logo_y_start = y_offset
+        logo_height = 35
+        
+        # Scanlines behind logo - FULL WIDTH
+        painter.setPen(QColor(255, 255, 255, 13))
+        for i in range(logo_y_start, logo_y_start + logo_height, 2):
+            painter.drawLine(0, i, rect.width(), i)
+        
+        # Calculate center position for logo
+        logo_text = "VITREOS"
+        logo_font: QFont = QFont("Consolas", 16, QFont.Weight.Bold)
+        painter.setFont(logo_font)
+        fm = painter.fontMetrics()
+        logo_width = fm.horizontalAdvance(logo_text)
+        logo_x = (rect.width() - logo_width) // 2
+        
+        # Neon glow effect (multiple passes)
+        for blur in [8, 6, 4, 2]:
+            painter.setPen(QColor(188, 19, 254, 30))
+            painter.drawText(logo_x - blur//2, y_offset + 22, logo_text)
+            painter.drawText(logo_x + blur//2, y_offset + 22, logo_text)
+        
+        # Main logo text (CENTERED)
+        painter.setPen(QColor("#bc13fe"))
+        painter.drawText(logo_x, y_offset + 22, logo_text)
+        y_offset += logo_height
+        
+        # Status LEDs (6x6px, CENTERED, labels below)
+        led_size = 6
+        led_spacing = 20
+        total_led_width = (len(self.led_states) - 1) * led_spacing + led_size
+        led_start_x = (rect.width() - total_led_width) // 2
+        led_y = y_offset
+        
+        for idx, (name, color) in enumerate(self.led_states.items()):
+            led_x = led_start_x + idx * led_spacing
+            painter.setBrush(QColor(color))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRect(led_x, led_y, led_size, led_size)
+        
+        # LED labels below squares (CENTERED)
+        painter.setPen(QColor("#888888"))
+        label_font: QFont = QFont("Consolas", 6)
+        painter.setFont(label_font)
+        for idx, name in enumerate(self.led_states.keys()):
+            led_x = led_start_x + idx * led_spacing
+            # Center each label under its LED
+            label_width = len(name) * 4
+            label_x = led_x + (led_size - label_width) // 2
+            painter.drawText(label_x, led_y + led_size + 9, name)
+        y_offset += 20
+        
+        # Separator
+        painter.setPen(QColor("#2a2a2e"))
+        painter.drawLine(0, y_offset, rect.width(), y_offset)
+        y_offset += 3
+        
+        # Semantic Log Feed (Ultra-high density)
+        log_font: QFont = QFont("Consolas", 8)
+        painter.setFont(log_font)
+        line_height = 11
+        
+        for msg in list(self.log_messages)[-35:]:
+            if y_offset > rect.height() - 45:
+                break
+            
+            # Parse and render with semantic tags
+            self._render_log_line(painter, msg, 3, y_offset, rect.width())
+            y_offset += line_height
+        
+        # Terminal Footer
+        footer_y = rect.height() - 38
+        painter.setPen(QColor("#2a2a2e"))
+        painter.drawLine(0, footer_y, rect.width(), footer_y)
+        footer_y += 3
+        
+        # Prompt with solid cursor
+        painter.setPen(QColor("#bc13fe"))
+        prompt_font: QFont = QFont("Consolas", 8)
+        painter.setFont(prompt_font)
+        painter.drawText(5, footer_y + 12, "root@vitreos:~#")
+        painter.fillRect(98, footer_y + 3, 8, 11, QColor("#bc13fe"))
+        footer_y += 18
+        
+        # Status bar separator
+        painter.setPen(QColor("#2a2a2e"))
+        painter.drawLine(0, footer_y, rect.width(), footer_y)
+        footer_y += 2
+        
+        # Metadata footer
+        painter.setPen(QColor("#666666"))
+        footer_font: QFont = QFont("Consolas", 7)
+        painter.setFont(footer_font)
+        painter.drawText(5, footer_y + 10, "UTF-8 | LF | BASH")
+        painter.drawText(rect.width() - 50, footer_y + 10, datetime.now().strftime("%H:%M:%S"))
+    
+    def _render_log_line(self, painter: QPainter, msg: str, x: int, y: int, width: int) -> None:
+        """Render a single log line with semantic solid block tags (Figma style)."""
+        # Extract timestamp and dim it
+        if msg.startswith('[') and ']' in msg:
+            timestamp_end = msg.find(']') + 1
+            timestamp = msg[:timestamp_end]
+            remaining = msg[timestamp_end:].strip()
+            
+            # Render dimmed timestamp
+            painter.setPen(QColor(188, 19, 254, 102))
+            painter.drawText(x, y, timestamp)
+            x_offset = x + len(timestamp) * 6 + 3
+        else:
+            remaining = msg
+            x_offset = x
+        
+        # Extract tag and message
+        if remaining.startswith('[') and ']' in remaining:
+            tag_end = remaining.find(']') + 1
+            tag = remaining[:tag_end]
+            message = remaining[tag_end:].strip()
+        else:
+            tag = ''
+            message = remaining
+        
+        # Render solid block tags (Figma style)
+        if tag in ['[INFO]', '[DEBUG]']:
+            # Dark purple background, white text
+            painter.fillRect(x_offset, y - 9, 42, 11, QColor(60, 10, 80))
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(x_offset + 2, y, tag.ljust(7))
+            x_offset += 46
+            
+            painter.setPen(QColor("#cccccc"))
+            painter.drawText(x_offset, y, message)
+        
+        elif tag == '[WARN]':
+            # Red background, white text
+            painter.fillRect(x_offset, y - 9, 42, 11, QColor("#ff0000"))
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(x_offset + 2, y, tag.ljust(7))
+            x_offset += 46
+            
+            painter.setPen(QColor("#cccccc"))
+            painter.drawText(x_offset, y, message)
+        
+        elif tag == '[FAN]':
+            # Orange background, white text
+            painter.fillRect(x_offset, y - 9, 42, 11, QColor("#ff8c00"))
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(x_offset + 2, y, tag.ljust(7))
+            x_offset += 46
+            
+            painter.setPen(QColor("#cccccc"))
+            painter.drawText(x_offset, y, message)
+        
+        elif tag == '[OK]':
+            # Green background, black text
+            painter.fillRect(x_offset, y - 9, 42, 11, QColor("#00ff00"))
+            painter.setPen(QColor("#000000"))
+            painter.drawText(x_offset + 2, y, tag.ljust(7))
+            x_offset += 46
+            
+            painter.setPen(QColor("#cccccc"))
+            painter.drawText(x_offset, y, message)
+        
+        elif tag in ['[CPU]', '[SYS]', '[NET]', '[GPU]', '[SEC]']:
+            # Purple outlined text
+            painter.setPen(QColor("#bc13fe"))
+            painter.drawText(x_offset, y, tag.ljust(7))
+            x_offset += 46
+            
+            painter.setPen(QColor("#cccccc"))
+            painter.drawText(x_offset, y, message)
+        
+        else:
+            # Default gray text
+            painter.setPen(QColor("#888888"))
+            painter.drawText(x_offset, y, remaining)
+
+class VitreosModule(QFrame):
+    """Windows-style module container with header bar and decorative controls."""
+    def __init__(self, title: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.title = title
+        self.content_widget: Optional[QWidget] = None
+        self.hazard_sticker: Optional[QLabel] = None
+        self.is_minimized: bool = False
+        self.setup_ui()
+        
+    def setup_ui(self) -> None:
+        self.setFrameStyle(QFrame.Shape.StyledPanel)
+        self.setStyleSheet("""
+            VitreosModule {
+                background-color: #121214;
+                border: 1px solid rgba(188, 19, 254, 0.5);
+                border-radius: 0px;
+            }
+            VitreosModule:hover {
+                border: 1px solid rgba(188, 19, 254, 1.0);
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Header bar
+        header = QFrame()
+        header.setFixedHeight(22)
+        header.setStyleSheet("""
+            QFrame {
+                background-color: #1a1a1e;
+                border-bottom: 1px solid #bc13fe;
+            }
+        """)
+        
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(5, 0, 5, 0)
+        header_layout.setSpacing(0)
+        
+        # Title with :: prefix
+        title_label = QLabel(f":: {self.title}")
+        title_label.setStyleSheet("""
+            QLabel {
+                color: #bc13fe;
+                font-family: 'Consolas', monospace;
+                font-size: 9pt;
+                font-weight: bold;
+                background: transparent;
+            }
+        """)
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+        
+        # Hazard sticker (initially hidden)
+        self.hazard_sticker = QLabel("")
+        self.hazard_sticker.setStyleSheet("""
+            QLabel {
+                background: transparent;
+                font-family: 'Consolas', monospace;
+                font-size: 7pt;
+                font-weight: bold;
+                padding: 2px 4px;
+                margin-right: 5px;
+            }
+        """)
+        self.hazard_sticker.hide()
+        header_layout.addWidget(self.hazard_sticker)
+        
+        # Decorative bracketed controls
+        btn_minimize = QLabel("[_]")
+        btn_minimize.setStyleSheet("color: #666666; font-family: 'Consolas'; font-size: 8pt; background: transparent;")
+        btn_minimize.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_minimize.mousePressEvent = lambda e: self.toggle_minimize()  # type: ignore
+        
+        btn_close = QLabel("[X]")
+        btn_close.setStyleSheet("color: #666666; font-family: 'Consolas'; font-size: 8pt; background: transparent;")
+        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_close.mousePressEvent = lambda e: self.close_module()  # type: ignore
+        
+        header_layout.addWidget(btn_minimize)
+        header_layout.addSpacing(5)
+        header_layout.addWidget(btn_close)
+        
+        layout.addWidget(header)
+        
+        # Content area
+        self.content_container = QWidget()
+        self.content_container.setStyleSheet("background: transparent;")
+        self.content_layout = QVBoxLayout(self.content_container)
+        self.content_layout.setContentsMargins(5, 5, 5, 5)
+        self.content_layout.setSpacing(5)
+        
+        layout.addWidget(self.content_container)
+    
+    def set_content(self, widget: QWidget) -> None:
+        """Set the content widget for this module."""
+        self.content_widget = widget
+        self.content_layout.addWidget(widget)
+    
+    def toggle_minimize(self) -> None:
+        """Toggle minimize/maximize state."""
+        if self.content_container is not None:  # type: ignore[reportUnnecessaryComparison]
+            self.is_minimized = not self.is_minimized
+            self.content_container.setVisible(not self.is_minimized)
+            logger.info(f"[SYS] Module {self.title} {'minimized' if self.is_minimized else 'restored'}")
+    
+    def close_module(self) -> None:
+        """Hide the module and log to pulse."""
+        self.hide()
+        logger.warning(f"[SYS] Module {self.title} detached from grid")
+    
+    def show_hazard_sticker(self, text: str, bg_color: str, text_color: str = "#000000") -> None:
+        """Display a hazard sticker with custom styling."""
+        if self.hazard_sticker is not None:  # type: ignore[reportUnnecessaryComparison]
+            self.hazard_sticker.setText(text)
+            self.hazard_sticker.setStyleSheet(f"""
+                QLabel {{
+                    background: {bg_color};
+                    color: {text_color};
+                    font-family: 'Consolas', monospace;
+                    font-size: 7pt;
+                    font-weight: bold;
+                    padding: 2px 4px;
+                    margin-right: 5px;
+                    border: 1px solid {text_color};
+                }}
+            """)
+            self.hazard_sticker.show()
+    
+    def hide_hazard_sticker(self) -> None:
+        """Hide the hazard sticker."""
+        if self.hazard_sticker is not None:  # type: ignore[reportUnnecessaryComparison]
+            self.hazard_sticker.hide()
+
+class CPUMonitorModule(QWidget):
+    """CPU monitoring with 16-core grid, load bar, clock, and power."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.cpu_thread_matrix = CPUThreadMatrix()
+        self.setStyleSheet("background: transparent;")
+        self.parent_module: Optional[VitreosModule] = None
+        self.avg_clock: float = 0.0
+        self.setup_ui()
+        
+    def setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        
+        # Thread matrix
+        layout.addWidget(self.cpu_thread_matrix)
+        
+        # Stats grid
+        stats_layout = QGridLayout()
+        stats_layout.setSpacing(5)
+        
+        self.load_label = QLabel("LOAD: 0%")
+        self.load_label.setStyleSheet("color: #00f2ff; font-family: 'Consolas'; font-size: 10pt; font-weight: bold; background: transparent;")
+        
+        self.clock_label = QLabel("CLOCK: 0 MHz")
+        self.clock_label.setStyleSheet("color: rgba(188, 19, 254, 0.6); font-family: 'Consolas'; font-size: 8pt; background: transparent;")
+        
+        self.power_label = QLabel("POWER: 0 W")
+        self.power_label.setStyleSheet("color: rgba(255, 140, 0, 0.6); font-family: 'Consolas'; font-size: 8pt; background: transparent;")
+        
+        stats_layout.addWidget(self.load_label, 0, 0)
+        stats_layout.addWidget(self.clock_label, 0, 1)
+        stats_layout.addWidget(self.power_label, 1, 0, 1, 2)
+        
+        layout.addLayout(stats_layout)
+    
+    def update_stats(self, cpu_usage: float, cpu_temp: float, cpu_loads: List[float], cpu_clock: float = 0.0) -> None:
+        self.cpu_thread_matrix.update_threads(cpu_loads, cpu_temp)
+        self.load_label.setText(f"LOAD: {cpu_usage:.1f}%")
+        
+        # Update clock display and hazard sticker
+        if cpu_clock > 0:
+            self.avg_clock = cpu_clock
+            self.clock_label.setText(f"CLOCK: {int(cpu_clock)} MHz")
+            
+            # Show OVERCLOCKED sticker if clock > 5000 MHz
+            if self.parent_module is not None and cpu_clock > 5000:  # type: ignore[reportUnnecessaryComparison]
+                self.parent_module.show_hazard_sticker("[ OVERCLOCKED ]", "#ffff00", "#000000")
+            elif self.parent_module is not None:  # type: ignore[reportUnnecessaryComparison]
+                self.parent_module.hide_hazard_sticker()
+
+class GPUMonitorModule(QWidget):
+    """GPU monitoring with circular HUD, VRAM, clocks, and temperature."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.gpu_circular_hud = GPUCircularHUD()
+        self.setStyleSheet("background: transparent;")
+        self.parent_module: Optional[VitreosModule] = None
+        self.setup_ui()
+        
+    def setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        
+        layout.addWidget(self.gpu_circular_hud)
+        
+        # Stats
+        stats_layout = QGridLayout()
+        stats_layout.setSpacing(5)
+        
+        self.vram_label = QLabel("VRAM: 0%")
+        self.vram_label.setStyleSheet("color: #00f2ff; font-family: 'Consolas'; font-size: 10pt; font-weight: bold; background: transparent;")
+        
+        self.temp_label = QLabel("TEMP: 0°C")
+        self.temp_label.setStyleSheet("color: rgba(255, 140, 0, 0.6); font-family: 'Consolas'; font-size: 8pt; background: transparent;")
+        
+        self.clock_label = QLabel("CLOCK: 0 MHz")
+        self.clock_label.setStyleSheet("color: rgba(188, 19, 254, 0.6); font-family: 'Consolas'; font-size: 8pt; background: transparent;")
+        
+        stats_layout.addWidget(self.vram_label, 0, 0)
+        stats_layout.addWidget(self.temp_label, 0, 1)
+        stats_layout.addWidget(self.clock_label, 1, 0, 1, 2)
+        
+        layout.addLayout(stats_layout)
+    
+    def update_stats(self, gpu_usage: float, gpu_temp: float, vram_percent: float) -> None:
+        self.gpu_circular_hud.update_usage(gpu_usage)
+        self.vram_label.setText(f"VRAM: {vram_percent:.1f}%")
+        self.temp_label.setText(f"TEMP: {gpu_temp:.0f}°C")
+        
+        # Show HOT sticker if temp > 82°C
+        if self.parent_module is not None and gpu_temp > 82:  # type: ignore[reportUnnecessaryComparison]
+            self.parent_module.show_hazard_sticker("[ HOT ]", "#ff0000", "#000000")
+        elif self.parent_module is not None:  # type: ignore[reportUnnecessaryComparison]
+            self.parent_module.hide_hazard_sticker()
+
+class MemoryArrayModule(QWidget):
+    """Memory monitoring with DIMM visualization and capacity stats."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent;")
+        self.setup_ui()
+        
+    def setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        
+        self.usage_label = QLabel("RAM: 0%")
+        self.usage_label.setStyleSheet("color: #00f2ff; font-family: 'Consolas'; font-size: 12pt; font-weight: bold; background: transparent;")
+        layout.addWidget(self.usage_label)
+        
+        self.capacity_label = QLabel("CAPACITY: 0 GB / 0 GB")
+        self.capacity_label.setStyleSheet("color: rgba(188, 19, 254, 0.6); font-family: 'Consolas'; font-size: 8pt; background: transparent;")
+        layout.addWidget(self.capacity_label)
+        
+        layout.addStretch()
+    
+    def update_stats(self, ram_usage: float) -> None:
+        self.usage_label.setText(f"RAM: {ram_usage:.1f}%")
+        import psutil
+        mem = psutil.virtual_memory()
+        total_gb = mem.total / (1024**3)
+        used_gb = mem.used / (1024**3)
+        self.capacity_label.setText(f"CAPACITY: {used_gb:.1f} GB / {total_gb:.1f} GB")
+
+class DiskArrayModule(QWidget):
+    """Storage monitoring with drive list and usage bars."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent;")
+        self.setup_ui()
+        
+    def setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        
+        self.disk_label = QLabel("DISK: 0%")
+        self.disk_label.setStyleSheet("color: #00f2ff; font-family: 'Consolas'; font-size: 12pt; font-weight: bold; background: transparent;")
+        layout.addWidget(self.disk_label)
+        
+        self.drives_label = QLabel("DRIVES: Scanning...")
+        self.drives_label.setStyleSheet("color: rgba(188, 19, 254, 0.6); font-family: 'Consolas'; font-size: 8pt; background: transparent;")
+        layout.addWidget(self.drives_label)
+        
+        layout.addStretch()
+    
+    def update_stats(self, disk_usage: float) -> None:
+        self.disk_label.setText(f"DISK: {disk_usage:.1f}%")
+
+class NetworkInterfaceModule(QWidget):
+    """Network monitoring with waveform and bandwidth stats."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.network_waveform = NetworkWaveform()
+        self.setStyleSheet("background: transparent;")
+        self.setup_ui()
+        
+    def setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        
+        layout.addWidget(self.network_waveform)
+        
+        self.stats_label = QLabel("NET: 0.00 Mbps")
+        self.stats_label.setStyleSheet("color: #00f2ff; font-family: 'Consolas'; font-size: 10pt; font-weight: bold; background: transparent;")
+        layout.addWidget(self.stats_label)
+    
+    def update_stats(self, speed_mbps: float) -> None:
+        """Update network stats with current speed in Mbps."""
+        self.network_waveform.add_point(speed_mbps)
+        self.stats_label.setText(f"NET: {speed_mbps:.2f} Mbps")
+
+class ThermalControlModule(QWidget):
+    """Thermal monitoring with fan tachometers and prediction."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent;")
+        self.cpu_fan_value: float = 0.0
+        self.gpu_fan_value: float = 0.0
+        self.parent_module: Optional[VitreosModule] = None
+        self.setup_ui()
+        
+    def setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        
+        self.cpu_temp_label = QLabel("CPU: 0°C")
+        self.cpu_temp_label.setStyleSheet("color: #00f2ff; font-family: 'Consolas'; font-size: 11pt; font-weight: bold; background: transparent;")
+        layout.addWidget(self.cpu_temp_label)
+        
+        self.gpu_temp_label = QLabel("GPU: 0°C")
+        self.gpu_temp_label.setStyleSheet("color: #ff8c00; font-family: 'Consolas'; font-size: 11pt; font-weight: bold; background: transparent;")
+        layout.addWidget(self.gpu_temp_label)
+        
+        self.prediction_label = QLabel("PREDICT: 0°C")
+        self.prediction_label.setStyleSheet("color: rgba(188, 19, 254, 0.6); font-family: 'Consolas'; font-size: 8pt; background: transparent;")
+        layout.addWidget(self.prediction_label)
+        
+        # Fan tachometer bars
+        fan_container = QWidget()
+        fan_container.setStyleSheet("background: transparent;")
+        fan_layout = QVBoxLayout(fan_container)
+        fan_layout.setSpacing(3)
+        
+        cpu_fan_label = QLabel("CPU FAN:")
+        cpu_fan_label.setStyleSheet("color: rgba(255, 255, 255, 0.6); font-family: 'Consolas'; font-size: 8pt; background: transparent;")
+        fan_layout.addWidget(cpu_fan_label)
+        
+        self.cpu_fan_bar = ThermalBar()
+        fan_layout.addWidget(self.cpu_fan_bar)
+        
+        gpu_fan_label = QLabel("GPU FAN:")
+        gpu_fan_label.setStyleSheet("color: rgba(255, 255, 255, 0.6); font-family: 'Consolas'; font-size: 8pt; background: transparent;")
+        fan_layout.addWidget(gpu_fan_label)
+        
+        self.gpu_fan_bar = ThermalBar()
+        fan_layout.addWidget(self.gpu_fan_bar)
+        
+        layout.addWidget(fan_container)
+        layout.addStretch()
+    
+    def update_stats(self, cpu_temp: float, gpu_temp: float, prediction: float, cpu_fan: float = 0.0, gpu_fan: float = 0.0) -> None:
+        self.cpu_temp_label.setText(f"CPU: {cpu_temp:.0f}°C")
+        self.gpu_temp_label.setText(f"GPU: {gpu_temp:.0f}°C")
+        self.prediction_label.setText(f"PREDICT: {prediction:.0f}°C")
+        
+        # Update fan bars
+        if cpu_fan > 0:
+            self.cpu_fan_value = cpu_fan
+        else:
+            self.cpu_fan_value = min(100, cpu_temp * 1.2)
+            
+        if gpu_fan > 0:
+            self.gpu_fan_value = gpu_fan
+        else:
+            self.gpu_fan_value = min(100, gpu_temp * 1.2)
+            
+        self.cpu_fan_bar.set_value(self.cpu_fan_value)
+        self.gpu_fan_bar.set_value(self.gpu_fan_value)
+        
+        # Show MAX_RPM sticker if either fan is at 100%
+        if self.parent_module is not None and (self.cpu_fan_value >= 100 or self.gpu_fan_value >= 100):  # type: ignore[reportUnnecessaryComparison]
+            self.parent_module.show_hazard_sticker("[ MAX_RPM ]", "#bc13fe", "#000000")
+        elif self.parent_module is not None:  # type: ignore[reportUnnecessaryComparison]
+            self.parent_module.hide_hazard_sticker()
+
+class ThermalBar(QWidget):
+    """Horizontal segmented LED bar for thermal/fan display."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setMinimumHeight(8)
+        self.setMaximumHeight(8)
+        self.value: float = 0.0
+        
+    def set_value(self, value: float) -> None:
+        self.value = value
+        self.update()
+        
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        """Render 1px high horizontal segmented LED bar."""
+        painter = QPainter(self)
+        rect = self.rect()
+        percentage = self.value / 100.0
+        
+        # Determine color based on value
+        active_color = QColor("#ff8c00") if self.value > 70 else QColor("#bc13fe")
+        ghost_color = QColor(188, 19, 254, 26)  # 10% opacity purple
+        
+        painter.setPen(Qt.PenStyle.NoPen)
+        
+        # Draw segments with 2px width and 1px gap
+        segment_width = 2
+        gap = 1
+        step = segment_width + gap
+        fill_width = int(rect.width() * percentage)
+        
+        for x in range(0, rect.width(), step):
+            if x + segment_width <= fill_width:
+                # Active segment
+                painter.setBrush(QBrush(active_color))
+            else:
+                # Ghost segment
+                painter.setBrush(QBrush(ghost_color))
+            painter.drawRect(x, 0, segment_width, rect.height())
+
+class NetworkWaveform(QWidget):
+    """Network area chart with vertical segmented LED bars."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setMinimumHeight(150)
+        self.data: Deque[float] = deque(maxlen=60)  # Store speed in Mbps
+        self.max_speed: float = 10.0  # Auto-scaling max speed
+    
+    def add_point(self, speed_mbps: float) -> None:
+        """Add network speed data point in Mbps."""
+        self.data.append(speed_mbps)
+        # Calculate a dynamic max based on the highest value in the current data window
+        current_max = max(self.data) if self.data else 0.1
+        # Add 20% headroom, but never drop below 1.0 Mbps scale
+        self.max_speed = max(1.0, current_max * 1.2)
+        self.update()
+    
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        """Render network speed chart with vertical segmented LED bars."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect()
+        
+        # Draw background
+        painter.fillRect(rect, QColor(10, 10, 12))
+        
+        if not self.data:
+            # Show "No Data" message
+            painter.setPen(QPen(QColor("#666666")))
+            font: QFont = painter.font()
+            font.setPointSize(10)
+            font.setFamily("Consolas")
+            painter.setFont(font)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Waiting for network data...")
+            return
+        
+        graph_h = rect.height() - 30
+        max_val = self.max_speed
+        
+        # Draw segmented vertical bars for each data point
+        num_points = len(self.data)
+        bar_width = max(2, rect.width() // num_points)
+        gap = 1
+        
+        painter.setPen(Qt.PenStyle.NoPen)
+        
+        for i, speed in enumerate(self.data):
+            x = i * bar_width
+            normalized_val = min(1.0, speed / max_val) if max_val > 0 else 0.0
+            bar_h = int(graph_h * normalized_val)
+            
+            # Determine color based on percentage (70% threshold)
+            percentage = normalized_val * 100
+            active_color = QColor("#ff8c00") if percentage > 70 else QColor("#bc13fe")
+            ghost_color = QColor(188, 19, 254, 26)  # 10% opacity purple
+            
+            # Draw vertical segmented bar (2px segments, 1px gaps)
+            segment_height = 2
+            seg_gap = 1
+            step = segment_height + seg_gap
+            
+            for seg_y in range(0, graph_h, step):
+                if graph_h - seg_y <= bar_h:
+                    # Active segment
+                    painter.setBrush(QBrush(active_color))
+                else:
+                    # Ghost segment
+                    painter.setBrush(QBrush(ghost_color))
+                painter.drawRect(x, graph_h - seg_y - segment_height, bar_width - gap, segment_height)
+        
+        # Draw speed indicator at bottom
+        painter.setPen(QPen(QColor("#00f2ff")))
+        font = painter.font()
+        font.setPointSize(8)
+        font.setFamily("Consolas")
+        font.setBold(True)
+        painter.setFont(font)
+        
+        current_speed = self.data[-1] if self.data else 0.0
+        speed_text = f"CURRENT: {current_speed:.2f} Mbps | MAX: {max_val:.2f} Mbps"
+        painter.drawText(5, rect.height() - 10, speed_text)
+
 class SecurityMonitor:
     """Advanced security monitoring with USB and startup detection"""
     
-    def __init__(self):
-        self.known_usb_devices = set()
-        self.known_startup_entries = set()
-        self.security_events = deque(maxlen=100)
-        self.monitoring_active = False
+    def __init__(self) -> None:
+        self.known_usb_devices: set[str] = set()
+        self.known_startup_entries: set[str] = set()
+        self.security_events: Deque[SecurityEvent] = deque(maxlen=100)
+        self.monitoring_active: bool = False
         
-    def start_monitoring(self):
+    def start_monitoring(self) -> None:
         """Start security monitoring"""
         self.monitoring_active = True
         self.known_usb_devices = self.get_current_usb_devices()
@@ -268,22 +1275,23 @@ class SecurityMonitor:
         threading.Thread(target=self.monitor_usb_devices, daemon=True).start()
         threading.Thread(target=self.monitor_startup_changes, daemon=True).start()
         
-    def get_current_usb_devices(self):
+    def get_current_usb_devices(self) -> set[str]:
         """Get current USB devices"""
         try:
-            result = subprocess.run([r'C:\Windows\System32\wbem\wmic.exe', 'path', 'Win32_USBControllerDevice', 'get', 'Dependent'], 
-                                  capture_output=True, text=True, timeout=5)
+            result: subprocess.CompletedProcess[str] = subprocess.run(
+                [r'C:\Windows\System32\wbem\wmic.exe', 'path', 'Win32_USBControllerDevice', 'get', 'Dependent'], 
+                capture_output=True, text=True, timeout=5)
             return set(result.stdout.split())
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
             print(f"USB device detection error: {e}")
             return set()
             
-    def get_startup_entries(self):
+    def get_startup_entries(self) -> set[str]:
         """Get current startup registry entries"""
-        entries = set()
+        entries: set[str] = set()
         try:
             # Check common startup locations
-            startup_keys = [
+            startup_keys: List[str] = [
                 r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
                 r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
                 r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunServices",
@@ -292,28 +1300,29 @@ class SecurityMonitor:
             for key in startup_keys:
                 try:
                     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_READ) as reg_key:
-                        i = 0
+                        i: int = 0
                         while True:
                             try:
+                                name: str
                                 name, value, _ = winreg.EnumValue(reg_key, i)
                                 entries.add(f"{name}:{value}")
                                 i += 1
                             except WindowsError:
                                 break
-                except:
+                except Exception:
                     pass
                     
-        except:
+        except Exception:
             pass
         return entries
         
-    def monitor_usb_devices(self):
+    def monitor_usb_devices(self) -> None:
         """Monitor USB device changes"""
         while self.monitoring_active:
             try:
-                current_devices = self.get_current_usb_devices()
-                new_devices = current_devices - self.known_usb_devices
-                removed_devices = self.known_usb_devices - current_devices
+                current_devices: set[str] = self.get_current_usb_devices()
+                new_devices: set[str] = current_devices - self.known_usb_devices
+                removed_devices: set[str] = self.known_usb_devices - current_devices
                 
                 if new_devices:
                     self.add_security_event("USB_INSERTION", f"New USB device detected: {len(new_devices)} device(s)", "WARNING")
@@ -328,12 +1337,12 @@ class SecurityMonitor:
                 print(f"USB monitoring error: {e}")
                 time.sleep(10)
                 
-    def monitor_startup_changes(self):
+    def monitor_startup_changes(self) -> None:
         """Monitor startup registry changes"""
         while self.monitoring_active:
             try:
-                current_entries = self.get_startup_entries()
-                new_entries = current_entries - self.known_startup_entries
+                current_entries: set[str] = self.get_startup_entries()
+                new_entries: set[str] = current_entries - self.known_startup_entries
                 
                 if new_entries:
                     for entry in new_entries:
@@ -346,7 +1355,7 @@ class SecurityMonitor:
                 print(f"Startup monitoring error: {e}")
                 time.sleep(60)
                 
-    def add_security_event(self, event_type: str, description: str, severity: str):
+    def add_security_event(self, event_type: str, description: str, severity: str) -> None:
         """Add security event to log"""
         event = SecurityEvent(
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -355,58 +1364,101 @@ class SecurityMonitor:
             severity=severity
         )
         self.security_events.append(event)
+        logger.warning(f"[SEC] {event_type}: {description}")
         
-    def get_recent_events(self, limit: int = 20):
+    def get_recent_events(self, limit: int = 20) -> List[SecurityEvent]:
         """Get recent security events"""
         return list(self.security_events)[-limit:]
+
+class AlertManager(QObject):
+    """Manages system alerts for critical events."""
+    def __init__(self, tray_icon: Optional[QSystemTrayIcon], db_connection: Any) -> None:
+        super().__init__()
+        self.tray_icon: Optional[QSystemTrayIcon] = tray_icon
+        self.db: Any = db_connection
+        self.alert_states: Dict[str, Dict[str, Optional[float]]] = {}
+
+    def check_and_alert(self, metric_name: str, current_value: float, threshold: float, duration_sec: int = 5) -> None:
+        """Check a metric and trigger an alert if it exceeds a threshold for a set duration."""
+        if metric_name not in self.alert_states:
+            self.alert_states[metric_name] = {'breached_at': None}
+
+        state: Dict[str, Optional[float]] = self.alert_states[metric_name]
+
+        if current_value > threshold:
+            breached_at: Optional[float] = state.get('breached_at')
+            if breached_at is None:
+                state['breached_at'] = time.time()
+            elif breached_at is not None and time.time() - breached_at >= duration_sec:
+                self.trigger_alert(metric_name, current_value)
+                state['breached_at'] = None # Reset after alert
+        else:
+            state['breached_at'] = None
+
+    def trigger_alert(self, metric_name: str, value: float) -> None:
+        """Trigger a system notification and log to the database."""
+        message: str = f"CRITICAL ALERT: {metric_name} has exceeded threshold with value: {value}"
+        logger.critical(f"[WARN] {message}")
+
+        if self.tray_icon:
+            self.tray_icon.showMessage(
+                "Vitreos Critical Alert",
+                message,
+                QSystemTrayIcon.MessageIcon.Critical,  # type: ignore
+                3000
+            )
+
+        if self.db:
+            self.db.log_event('CRITICAL_ALERT', message, 'CRITICAL')
+
 
 class NetworkAnalyzer:
     """Advanced network monitoring with jitter and bandwidth analysis"""
     
-    def __init__(self):
-        self.ping_history = deque(maxlen=100)
-        self.bandwidth_history = deque(maxlen=50)
-        self.current_bandwidth_hogs = {}
+    def __init__(self) -> None:
+        self.ping_history: Deque[float] = deque(maxlen=100)
+        self.bandwidth_history: Deque[float] = deque(maxlen=50)
+        self.current_bandwidth_hogs: Dict[str, int] = {}
         
-    def measure_ping_jitter(self):
+    def measure_ping_jitter(self) -> Tuple[float, float]:
         """Measure network ping and jitter"""
         try:
             # Use Google DNS as ping target with absolute path
-            result = subprocess.run([r'C:\Windows\System32\ping.exe', '-n', '5', '8.8.8.8'], 
-                                  capture_output=True, text=True, timeout=10)
+            result: subprocess.CompletedProcess[str] = subprocess.run(
+                [r'C:\Windows\System32\ping.exe', '-n', '5', '8.8.8.8'], 
+                capture_output=True, text=True, timeout=10)
             
             if result.returncode == 0:
-                lines = result.stdout.split('\n')
-                times = []
+                lines: List[str] = result.stdout.split('\n')
+                times: List[float] = []
                 for line in lines:
                     if 'time=' in line:
                         try:
-                            time_ms = float(line.split('time=')[1].split('ms')[0])
+                            time_ms: float = float(line.split('time=')[1].split('ms')[0])
                             times.append(time_ms)
                         except (ValueError, IndexError):
                             pass
                 
                 if len(times) >= 3:
-                    avg_ping = statistics.mean(times)
-                    jitter = statistics.stdev(times) if len(times) > 1 else 0
-                    return avg_ping, jitter
+                    jitter: float = statistics.stdev(times) if len(times) > 1 else 0.0
+                    return statistics.mean(times), jitter
                     
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
             print(f"Ping measurement error: {e}")
-        return 0, 0
+        return 0.0, 0.0
         
-    def analyze_bandwidth_hogs(self):
+    def analyze_bandwidth_hogs(self) -> None:
         """Analyze which processes are using the most bandwidth"""
         try:
             # Get network connections and map to processes
-            connections = psutil.net_connections(kind='inet')
-            process_bandwidth = {}
+            connections: List[Any] = psutil.net_connections(kind='inet')
+            process_bandwidth: Dict[str, int] = {}
             
             for conn in connections:
                 if conn.pid and conn.status == 'ESTABLISHED':
                     try:
-                        process = psutil.Process(conn.pid)
-                        name = process.name()
+                        process: psutil.Process = psutil.Process(conn.pid)
+                        name: str = process.name()
                         if not name:  # Skip empty process names
                             name = f"PID_{conn.pid}"
                         if name in process_bandwidth:
@@ -416,76 +1468,545 @@ class NetworkAnalyzer:
                     except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
                         pass
                         
-            # Sort by connection count (proxy for bandwidth usage)
-            sorted_hogs = sorted(process_bandwidth.items(), key=lambda x: x[1], reverse=True)
-            self.current_bandwidth_hogs = dict(sorted_hogs[:10])
+            # Sort by connection count (proxy for bandwidth usage) - return all active connections
+            sorted_hogs: List[Tuple[str, int]] = sorted(process_bandwidth.items(), key=lambda x: x[1], reverse=True)
+            self.current_bandwidth_hogs = dict(sorted_hogs)
             
         except (OSError, ValueError) as e:
             print(f"Bandwidth analysis error: {e}")
             
-    def get_bandwidth_summary(self):
+    def get_bandwidth_summary(self) -> Dict[str, Any]:
         """Get bandwidth usage summary"""
         try:
-            net_io = psutil.net_io_counters()
-            mb_recv = net_io.bytes_recv / (1024 * 1024)
-            mb_sent = net_io.bytes_sent / (1024 * 1024)
+            net_io: Any = psutil.net_io_counters(pernic=False)  # type: ignore
+            mb_recv: float = net_io.bytes_recv / (1024 * 1024)  # type: ignore
+            mb_sent: float = net_io.bytes_sent / (1024 * 1024)  # type: ignore
             
             return {
                 'downloaded': mb_recv,
                 'uploaded': mb_sent,
                 'hogs': self.current_bandwidth_hogs
             }
-        except:
-            return {'downloaded': 0, 'uploaded': 0, 'hogs': {}}
+        except Exception:
+            return {'downloaded': 0.0, 'uploaded': 0.0, 'hogs': {}}
 
 class PredictiveThermalAlert:
     """Predictive thermal throttling alerts using linear regression"""
     
-    def __init__(self):
-        self.temp_history = deque(maxlen=60)  # Last 2 minutes at 2-second intervals
-        self.load_history = deque(maxlen=60)
+    def __init__(self) -> None:
+        self.temp_history: Deque[float] = deque(maxlen=60)  # Last 2 minutes at 2-second intervals
+        self.load_history: Deque[float] = deque(maxlen=60)
         
-    def add_reading(self, temp: float, load: float):
+    def add_reading(self, temp: float, load: float) -> None:
         """Add new temperature and load reading"""
         self.temp_history.append(temp)
         self.load_history.append(load)
         
-    def predict_throttling_time(self):
+    def predict_throttling_time(self) -> Optional[float]:
         """Predict time until thermal throttling"""
         if len(self.temp_history) < 10:
             return None
             
         # Simple linear regression
-        temps = list(self.temp_history)
-        loads = list(self.load_history)
+        temps: List[float] = list(self.temp_history)
         
-        n = len(temps)
-        sum_x = sum(range(n))
-        sum_y = sum(temps)
-        sum_xy = sum(i * temp for i, temp in enumerate(temps))
-        sum_x2 = sum(i * i for i in range(n))
+        n: int = len(temps)
+        sum_x: int = sum(range(n))
+        sum_y: float = sum(temps)
+        sum_xy: float = sum(i * temp for i, temp in enumerate(temps))
+        sum_x2: int = sum(i * i for i in range(n))
         
-        # Calculate slope and intercept
+        # Calculate slope
         try:
-            denominator = n * sum_x2 - sum_x * sum_x
+            denominator: int = n * sum_x2 - sum_x * sum_x
             # Avoid division by zero
             if denominator == 0:
                 return None
                 
-            slope = (n * sum_xy - sum_x * sum_y) / denominator
-            intercept = (sum_y - slope * sum_x) / n
+            slope: float = (n * sum_xy - sum_x * sum_y) / denominator
             
             # Predict time until 85°C (thermal throttling threshold)
-            current_temp = temps[-1]
+            current_temp: float = temps[-1]
             if slope > 0:  # Heating up
-                time_to_throttle = (85 - current_temp) / slope
+                time_to_throttle: float = (85 - current_temp) / slope
                 if time_to_throttle > 0:
-                    return max(0, time_to_throttle * 2)  # Convert to seconds (2s intervals)
+                    return max(0.0, time_to_throttle * 2)  # Convert to seconds (2s intervals)
         except (ZeroDivisionError, ValueError) as e:
             print(f"Thermal prediction error: {e}")
             return None
             
         return None
+
+class PurgeConfirmationDialog(QDialog):
+    """Interactive confirmation dialog for Purge Protocol with checkbox selection"""
+    
+    def __init__(self, targets: List[Tuple[int, str, float, bool]], parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.targets = targets
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setModal(True)
+        self.resize(650, 700)
+        self.setup_ui()
+    
+    def setup_ui(self) -> None:
+        """Setup dialog UI with Cyberdeck styling"""
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #08080a;
+                border: 2px solid #bc13fe;
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        # Title
+        title = QLabel("[ REVIEW PURGE TARGETS ]")
+        title.setStyleSheet("""
+            QLabel {
+                color: #ff8c00;
+                font-family: 'Courier New', monospace;
+                font-size: 14pt;
+                font-weight: bold;
+                padding: 10px;
+            }
+        """)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        
+        # Utility buttons
+        button_row = QHBoxLayout()
+        button_row.setSpacing(10)
+        
+        btn_select_all = QPushButton("☑ Select All")
+        btn_select_all.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid #00f2ff;
+                color: #00f2ff;
+                font-family: 'Courier New', monospace;
+                font-size: 9pt;
+                font-weight: bold;
+                padding: 8px 12px;
+            }
+            QPushButton:hover {
+                background-color: #00f2ff;
+                color: #000000;
+            }
+        """)
+        btn_select_all.clicked.connect(self.select_all)  # type: ignore
+        
+        btn_unselect_all = QPushButton("☐ Unselect All")
+        btn_unselect_all.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid #666666;
+                color: #666666;
+                font-family: 'Courier New', monospace;
+                font-size: 9pt;
+                font-weight: bold;
+                padding: 8px 12px;
+            }
+            QPushButton:hover {
+                background-color: #666666;
+                color: #000000;
+            }
+        """)
+        btn_unselect_all.clicked.connect(self.unselect_all)  # type: ignore
+        
+        btn_bloatware_only = QPushButton("🎯 Bloatware Only")
+        btn_bloatware_only.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid #bc13fe;
+                color: #bc13fe;
+                font-family: 'Courier New', monospace;
+                font-size: 9pt;
+                font-weight: bold;
+                padding: 8px 12px;
+            }
+            QPushButton:hover {
+                background-color: #bc13fe;
+                color: #000000;
+            }
+        """)
+        btn_bloatware_only.clicked.connect(self.select_bloatware)  # type: ignore
+        
+        button_row.addWidget(btn_select_all)
+        button_row.addWidget(btn_unselect_all)
+        button_row.addWidget(btn_bloatware_only)
+        button_row.addStretch()
+        
+        layout.addLayout(button_row)
+        
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Kill", "Process", "RAM (MB)"])  # type: ignore[arg-type]
+        self.table.setRowCount(len(self.targets))
+        
+        header = self.table.horizontalHeader()
+        if header is not None:
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, 50)
+        self.table.setColumnWidth(2, 100)
+        
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background-color: transparent;
+                border: 1px solid #bc13fe;
+                color: #00f2ff;
+                font-family: 'Consolas', monospace;
+                font-size: 9pt;
+                gridline-color: rgba(188, 19, 254, 0.3);
+            }
+            QTableWidget::item {
+                padding: 6px;
+            }
+            QHeaderView::section {
+                background-color: #1a1a1e;
+                color: #bc13fe;
+                font-family: 'Courier New', monospace;
+                font-weight: bold;
+                font-size: 9pt;
+                padding: 8px;
+                border: none;
+                border-bottom: 2px solid #bc13fe;
+            }
+        """)
+        
+        # Disable sorting during population
+        self.table.setSortingEnabled(False)
+        
+        # Populate table
+        for row, (pid, name, mem_mb, is_bloat) in enumerate(self.targets):
+            # Checkbox column - only check if known bloatware
+            check_item: QTableWidgetItem = QTableWidgetItem()
+            if is_bloat:
+                check_item.setCheckState(Qt.CheckState.Checked)
+            else:
+                check_item.setCheckState(Qt.CheckState.Unchecked)
+            check_item.setData(Qt.ItemDataRole.UserRole, pid)
+            check_item.setData(Qt.ItemDataRole.UserRole + 1, is_bloat)
+            check_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 0, check_item)
+            
+            # Process name
+            name_item: QTableWidgetItem = QTableWidgetItem(name)
+            name_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 1, name_item)
+            
+            # RAM usage - use setData for numeric sorting
+            ram_item = QTableWidgetItem()
+            ram_item.setData(Qt.ItemDataRole.DisplayRole, round(mem_mb, 1))
+            ram_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 2, ram_item)
+        
+        # Enable sorting and sort by RAM descending
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(2, Qt.SortOrder.DescendingOrder)
+        
+        layout.addWidget(self.table)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
+        
+        btn_cancel = QPushButton("[CANCEL]")
+        btn_cancel.setFixedHeight(40)
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 2px solid #666666;
+                color: #666666;
+                font-family: 'Courier New', monospace;
+                font-size: 11pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #666666;
+                color: #000000;
+            }
+        """)
+        btn_cancel.clicked.connect(self.reject)  # type: ignore
+        
+        btn_execute = QPushButton("[EXECUTE PURGE]")
+        btn_execute.setFixedHeight(40)
+        btn_execute.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 2px solid #ff8c00;
+                color: #ff8c00;
+                font-family: 'Courier New', monospace;
+                font-size: 11pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #ff8c00;
+                color: #000000;
+            }
+        """)
+        btn_execute.clicked.connect(self.accept)  # type: ignore
+        
+        button_layout.addWidget(btn_cancel)
+        button_layout.addWidget(btn_execute)
+        
+        layout.addLayout(button_layout)
+    
+    def get_selected_pids(self) -> List[int]:
+        """Return list of PIDs that are checked for termination"""
+        selected_pids: List[int] = []
+        for row in range(self.table.rowCount()):
+            check_item = self.table.item(row, 0)
+            if check_item and check_item.checkState() == Qt.CheckState.Checked:
+                pid = check_item.data(Qt.ItemDataRole.UserRole)
+                if pid is not None:
+                    selected_pids.append(pid)
+        return selected_pids
+    
+    def select_all(self) -> None:
+        """Select all checkboxes"""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item:
+                item.setCheckState(Qt.CheckState.Checked)
+    
+    def unselect_all(self) -> None:
+        """Unselect all checkboxes"""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item:
+                item.setCheckState(Qt.CheckState.Unchecked)
+    
+    def select_bloatware(self) -> None:
+        """Select only known bloatware, unselect everything else"""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item:
+                is_bloat = item.data(Qt.ItemDataRole.UserRole + 1)
+                if is_bloat:
+                    item.setCheckState(Qt.CheckState.Checked)
+                else:
+                    item.setCheckState(Qt.CheckState.Unchecked)
+
+class TuningConfirmationDialog(QDialog):
+    """Interactive confirmation dialog for eSports tuning operations"""
+    
+    def __init__(self, title: str, targets: List[Tuple[int, str, str, bool]], parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.targets = targets
+        self.title_text = title
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setModal(True)
+        self.resize(650, 700)
+        self.setup_ui()
+    
+    def setup_ui(self) -> None:
+        """Setup dialog UI with Cyberdeck styling"""
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #08080a;
+                border: 2px solid #bc13fe;
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        # Title
+        title = QLabel(self.title_text)
+        title.setStyleSheet("""
+            QLabel {
+                color: #ff8c00;
+                font-family: 'Courier New', monospace;
+                font-size: 14pt;
+                font-weight: bold;
+                padding: 10px;
+            }
+        """)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        
+        # Utility buttons
+        button_row = QHBoxLayout()
+        button_row.setSpacing(10)
+        
+        btn_select_all = QPushButton("☑ Select All")
+        btn_select_all.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid #00f2ff;
+                color: #00f2ff;
+                font-family: 'Courier New', monospace;
+                font-size: 9pt;
+                font-weight: bold;
+                padding: 8px 12px;
+            }
+            QPushButton:hover {
+                background-color: #00f2ff;
+                color: #000000;
+            }
+        """)
+        btn_select_all.clicked.connect(self.select_all)  # type: ignore
+        
+        btn_unselect_all = QPushButton("☐ Unselect All")
+        btn_unselect_all.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid #666666;
+                color: #666666;
+                font-family: 'Courier New', monospace;
+                font-size: 9pt;
+                font-weight: bold;
+                padding: 8px 12px;
+            }
+            QPushButton:hover {
+                background-color: #666666;
+                color: #000000;
+            }
+        """)
+        btn_unselect_all.clicked.connect(self.unselect_all)  # type: ignore
+        
+        button_row.addWidget(btn_select_all)
+        button_row.addWidget(btn_unselect_all)
+        button_row.addStretch()
+        
+        layout.addLayout(button_row)
+        
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Select", "Process", "Target State"])  # type: ignore[arg-type]
+        self.table.setRowCount(len(self.targets))
+        
+        header = self.table.horizontalHeader()
+        if header is not None:
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(0, 50)
+        
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background-color: transparent;
+                border: 1px solid #bc13fe;
+                color: #00f2ff;
+                font-family: 'Consolas', monospace;
+                font-size: 9pt;
+                gridline-color: rgba(188, 19, 254, 0.3);
+            }
+            QTableWidget::item {
+                padding: 6px;
+            }
+            QHeaderView::section {
+                background-color: #1a1a1e;
+                color: #bc13fe;
+                font-family: 'Courier New', monospace;
+                font-weight: bold;
+                font-size: 9pt;
+                padding: 8px;
+                border: none;
+                border-bottom: 2px solid #bc13fe;
+            }
+        """)
+        
+        # Populate table
+        for row, (pid, name, target_state, is_recommended) in enumerate(self.targets):
+            # Checkbox column
+            check_item: QTableWidgetItem = QTableWidgetItem()
+            if is_recommended:
+                check_item.setCheckState(Qt.CheckState.Checked)
+            else:
+                check_item.setCheckState(Qt.CheckState.Unchecked)
+            check_item.setData(Qt.ItemDataRole.UserRole, pid)
+            check_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 0, check_item)
+            
+            # Process name
+            name_item: QTableWidgetItem = QTableWidgetItem(name)
+            name_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 1, name_item)
+            
+            # Target state
+            state_item: QTableWidgetItem = QTableWidgetItem(target_state)
+            state_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 2, state_item)
+        
+        layout.addWidget(self.table)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
+        
+        btn_cancel = QPushButton("[CANCEL]")
+        btn_cancel.setFixedHeight(40)
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 2px solid #666666;
+                color: #666666;
+                font-family: 'Courier New', monospace;
+                font-size: 11pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #666666;
+                color: #000000;
+            }
+        """)
+        btn_cancel.clicked.connect(self.reject)  # type: ignore
+        
+        btn_execute = QPushButton("[EXECUTE]")
+        btn_execute.setFixedHeight(40)
+        btn_execute.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 2px solid #ff8c00;
+                color: #ff8c00;
+                font-family: 'Courier New', monospace;
+                font-size: 11pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #ff8c00;
+                color: #000000;
+            }
+        """)
+        btn_execute.clicked.connect(self.accept)  # type: ignore
+        
+        button_layout.addWidget(btn_cancel)
+        button_layout.addWidget(btn_execute)
+        
+        layout.addLayout(button_layout)
+    
+    def get_selected_pids(self) -> List[int]:
+        """Return list of PIDs that are checked"""
+        selected_pids: List[int] = []
+        for row in range(self.table.rowCount()):
+            check_item = self.table.item(row, 0)
+            if check_item and check_item.checkState() == Qt.CheckState.Checked:
+                pid = check_item.data(Qt.ItemDataRole.UserRole)
+                if pid is not None:
+                    selected_pids.append(pid)
+        return selected_pids
+    
+    def select_all(self) -> None:
+        """Select all checkboxes"""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item:
+                item.setCheckState(Qt.CheckState.Checked)
+    
+    def unselect_all(self) -> None:
+        """Unselect all checkboxes"""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item:
+                item.setCheckState(Qt.CheckState.Unchecked)
 
 class HardwareMonitorWorker(QObject):
     """Worker thread for hardware monitoring - runs in separate thread"""
@@ -499,14 +2020,27 @@ class HardwareMonitorWorker(QObject):
     storage_updated = pyqtSignal(dict)  # Dict with per-drive stats and I/O counters
     network_updated = pyqtSignal(dict)  # Dict with downloaded and uploaded data
     
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self.is_running = False
-        self.gpu_handle = None
+        self.is_running: bool = False
+        self.gpu_handle: Optional[Any] = None
         # Thermal prediction: store last 10 CPU temp readings
-        self.cpu_temp_history = deque(maxlen=10)
+        self.cpu_temp_history: Deque[float] = deque(maxlen=10)
+        # Heartbeat Regulator
+        self.polling_interval: float = 2.0
+        # Combat Mode
+        self.combat_mode_active: bool = False
+        self.user_polling_interval: float = 2.0
+        # Disk I/O tracking state
+        self.last_disk_io: Optional[Any] = None
+        # Network I/O tracking state (per-NIC)
+        self.last_net_io: Optional[Dict[str, Any]] = None
+        self.selected_nic: Optional[str] = None
+        self.available_nics: List[str] = []
+        # Network analyzer for ping/jitter
+        self.network_analyzer: NetworkAnalyzer = NetworkAnalyzer()
         
-    def setup_gpu(self):
+    def setup_gpu(self) -> None:
         """Initialize GPU handle by finding first device that supports power usage"""
         try:
             logger.debug("Initializing NVIDIA GPU Handle...")
@@ -516,29 +2050,27 @@ class HardwareMonitorWorker(QObject):
                 self.gpu_handle = None
                 return
             
-            pynvml.nvmlInit()
+            cast(Any, pynvml.nvmlInit())  # type: ignore[attr-defined]
             logger.info("NVML initialized successfully")
             
-            device_count = pynvml.nvmlDeviceGetCount()
+            device_count: int = cast(int, pynvml.nvmlDeviceGetCount())  # type: ignore[attr-defined]
             logger.info(f"Found {device_count} NVIDIA GPU device(s)")
             
             # Loop through devices to find one that supports power usage
             for i in range(device_count):
                 try:
-                    handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                    device_name = pynvml.nvmlDeviceGetName(handle)
+                    handle: Any = cast(Any, pynvml.nvmlDeviceGetHandleByIndex(i))  # type: ignore[attr-defined]
+                    device_name: str = str(cast(str, pynvml.nvmlDeviceGetName(handle)))  # type: ignore[attr-defined]
                     logger.debug(f"FOUND GPU: {device_name}")
                     
                     # Test if this device supports power usage query
-                    power_supported = False
                     try:
-                        power = pynvml.nvmlDeviceGetPowerUsage(handle)
-                        power_supported = True
+                        cast(int, pynvml.nvmlDeviceGetPowerUsage(handle))  # type: ignore[attr-defined]
                         logger.info(f"SUCCESS: Found GPU {device_name}. Power Support: True")
                         self.gpu_handle = handle
                         return
                     except Exception as power_err:
-                        error_type = type(power_err).__name__
+                        error_type: str = type(power_err).__name__
                         logger.warning(f"POWER SUPPORTED: False ({error_type})")
                         continue
                 
@@ -552,7 +2084,7 @@ class HardwareMonitorWorker(QObject):
             
             if device_count > 0:
                 # Use first device anyway for temp/usage data
-                self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                self.gpu_handle = cast(Any, pynvml.nvmlDeviceGetHandleByIndex(0))  # type: ignore[attr-defined]
                 logger.info("Using first GPU for basic monitoring (no power/fan data)")
             else:
                 self.gpu_handle = None
@@ -563,50 +2095,76 @@ class HardwareMonitorWorker(QObject):
             logger.error(f"GPU initialization failed ({error_type}): {e}")
             self.gpu_handle = None
     
-    def collect_top_processes(self) -> List[Tuple[int, str, float]]:
-        """Collect top 10 memory-consuming processes"""
+
+    def check_apex_active(self) -> bool:
+        """Check if Apex Legends is the active foreground window"""
         try:
-            processes = []
-            for proc in psutil.process_iter(['pid', 'name', 'memory_percent']):
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            length = user32.GetWindowTextLengthW(hwnd)
+            buff = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buff, length + 1)
+            window_title = buff.value.lower()
+            
+            for proc in psutil.process_iter(['name']):
+                if 'r5apex.exe' in proc.info['name'].lower():
+                    if 'apex' in window_title or 'r5apex' in window_title:
+                        return True
+            return False
+        except:
+            return False
+    
+    def collect_top_processes(self) -> List[Tuple[int, str, float, float]]:
+        """Collect top 15 memory-consuming processes (>10MB) excluding critical system processes"""
+        try:
+            processes: List[Tuple[int, str, float, float]] = []
+            for proc in psutil.process_iter(['pid', 'name', 'memory_info', 'cpu_percent']):
                 try:
-                    mem_mb = proc.info['memory_percent']
-                    if mem_mb > 0.1:  # Filter out trivial memory usage
-                        processes.append((proc.info['pid'], proc.info['name'], mem_mb))
+                    proc_info: Dict[str, Any] = proc.info
+                    proc_name: str = proc_info['name'].lower()
+                    mem_mb: float = proc_info['memory_info'].rss / (1024 * 1024)
+                    
+                    # Filter: >10MB and NOT in critical system processes
+                    if mem_mb > 10.0 and proc_name not in CRITICAL_SYSTEM_PROCESSES:
+                        cpu_pct: float = proc_info['cpu_percent'] if proc_info['cpu_percent'] else 0.0
+                        processes.append((proc_info['pid'], proc_info['name'], mem_mb, cpu_pct))
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
             
-            # Sort by memory usage and return top 10
-            return sorted(processes, key=lambda x: x[2], reverse=True)[:10]
+            # Sort by memory usage descending and return top 15
+            return sorted(processes, key=lambda x: x[2], reverse=True)[:15]
         except Exception as e:
             logger.error(f"Error collecting top processes: {e}")
             return []
     
-    def collect_gpu_advanced(self) -> Dict[str, float]:
+    def collect_gpu_advanced(self) -> Dict[str, Any]:
         """Collect detailed GPU statistics"""
-        gpu_data = {
+        gpu_data: Dict[str, Any] = {
             'gpu_clock_mhz': 0.0,
             'gpu_power_watts': 0.0,
             'gpu_fan_percent': 0.0,
+            'gpu_hotspot_temp': 0.0,
+            'gpu_throttling': ''
         }
         
         if not (NVML_AVAILABLE and self.gpu_handle is not None):
             return gpu_data
         
         try:
-            handle = self.gpu_handle
+            handle: Any = self.gpu_handle
             
             # GPU Clock Speed
             try:
-                clock = pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_GRAPHICS)
+                clock: int = cast(int, pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_GRAPHICS))  # type: ignore[attr-defined]
                 gpu_data['gpu_clock_mhz'] = float(clock)
             except Exception as e:
-                error_type = type(e).__name__
+                error_type: str = type(e).__name__
                 logger.debug(f"GPU clock speed error ({error_type}): {e}")
                 gpu_data['gpu_clock_mhz'] = 0.0
             
             # Power Draw
             try:
-                power = pynvml.nvmlDeviceGetPowerUsage(handle)
+                power: int = cast(int, pynvml.nvmlDeviceGetPowerUsage(handle))  # type: ignore[attr-defined]
                 gpu_data['gpu_power_watts'] = float(power) / 1000.0  # Convert milliwatts to watts
             except Exception as e:
                 error_type = type(e).__name__
@@ -615,12 +2173,43 @@ class HardwareMonitorWorker(QObject):
             
             # Fan Speed (if available)
             try:
-                fan = pynvml.nvmlDeviceGetFanSpeed(handle)
+                fan: int = cast(int, pynvml.nvmlDeviceGetFanSpeed(handle))  # type: ignore[attr-defined]
                 gpu_data['gpu_fan_percent'] = float(fan)
             except Exception as e:
                 error_type = type(e).__name__
                 logger.debug(f"GPU fan speed error ({error_type}): {e}")
                 gpu_data['gpu_fan_percent'] = 0.0
+
+            # Hotspot Temperature (safely check if constant exists)
+            try:
+                hotspot_constant = getattr(pynvml, 'NVML_TEMPERATURE_GPU_HOTSPOT', None)
+                if hotspot_constant is not None:
+                    hotspot_temp: int = cast(int, pynvml.nvmlDeviceGetTemperature(handle, hotspot_constant))  # type: ignore[attr-defined]
+                    gpu_data['gpu_hotspot_temp'] = float(hotspot_temp)
+                else:
+                    gpu_data['gpu_hotspot_temp'] = 0.0
+            except Exception as e:
+                error_type = type(e).__name__
+                logger.debug(f"GPU hotspot temp error ({error_type}): {e}")
+                gpu_data['gpu_hotspot_temp'] = 0.0
+
+            # Throttling Status
+            try:
+                throttling: int = cast(int, pynvml.nvmlDeviceGetCurrentClocksThrottleReasons(handle))  # type: ignore[attr-defined]
+                reasons: List[str] = []
+                if throttling & pynvml.nvmlClocksThrottleReasonGpuIdle:  # type: ignore[attr-defined]
+                    reasons.append("Idle")
+                if throttling & pynvml.nvmlClocksThrottleReasonHwSlowdown:  # type: ignore[attr-defined]
+                    reasons.append("HW Slowdown")
+                if throttling & pynvml.nvmlClocksThrottleReasonSwPowerCap:  # type: ignore[attr-defined]
+                    reasons.append("Power Cap")
+                if throttling & pynvml.nvmlClocksThrottleReasonHwThermalSlowdown:  # type: ignore[attr-defined]
+                    reasons.append("Thermal")
+                gpu_data['gpu_throttling'] = ", ".join(reasons) if reasons else "None"
+            except Exception as e:
+                error_type = type(e).__name__
+                logger.debug(f"GPU throttling error ({error_type}): {e}")
+                gpu_data['gpu_throttling'] = "N/A"
                 
         except Exception as e:
             error_type = type(e).__name__
@@ -643,28 +2232,26 @@ class HardwareMonitorWorker(QObject):
                 return current_temp  # Return current if not enough history
             
             # Calculate simple linear trend: (temp_now - temp_oldest) / time_points
-            temps = list(self.cpu_temp_history)
-            n = len(temps)
+            temps: List[float] = list(self.cpu_temp_history)
+            n: int = len(temps)
             
             # Calculate trend using least squares regression
-            x_values = list(range(n))  # Time points [0, 1, 2, ...]
-            
-            sum_x = sum(x_values)
-            sum_y = sum(temps)
-            sum_xy = sum(x * y for x, y in zip(x_values, temps))
-            sum_x2 = sum(x * x for x in x_values)
+            sum_x: int = sum(range(n))
+            sum_y: float = sum(temps)
+            sum_xy: float = sum(i * temp for i, temp in enumerate(temps))
+            sum_x2: int = sum(i * i for i in range(n))
             
             # Slope calculation: (n*sum_xy - sum_x*sum_y) / (n*sum_x2 - sum_x^2)
-            denominator = n * sum_x2 - sum_x * sum_x
+            denominator: int = n * sum_x2 - sum_x * sum_x
             if denominator == 0:
                 logger.debug("Thermal prediction: no trend detected (flat temperature)")
                 return current_temp  # No trend
             
-            slope = (n * sum_xy - sum_x * sum_y) / denominator
+            slope: float = (n * sum_xy - sum_x * sum_y) / denominator
             
             # Predict temperature at t=30 seconds (we update every 2 seconds, so 15 time units ahead)
             # Assuming roughly 2-second intervals between readings
-            predicted_temp = current_temp + (slope * 15)
+            predicted_temp: float = current_temp + (slope * 15)
             
             # Clamp to reasonable range (shouldn't jump more than 20°C in 30 seconds)
             predicted_temp = max(current_temp - 5, min(predicted_temp, current_temp + 20))
@@ -675,24 +2262,24 @@ class HardwareMonitorWorker(QObject):
             return round(predicted_temp, 1)
             
         except Exception as e:
-            error_type = type(e).__name__
+            error_type: str = type(e).__name__
             logger.error(f"Error calculating thermal prediction ({error_type}): {e}")
             return current_temp
     
     def collect_storage_data(self) -> Dict[str, Any]:
         """Collect storage and disk I/O statistics"""
-        storage_data = {
+        storage_data: Dict[str, Any] = {
             'drives': {},
             'io_counters': {},
         }
         
         try:
             # Get all mounted disk partitions
-            partitions = psutil.disk_partitions()
+            partitions: List[Any] = psutil.disk_partitions()
             
             for partition in partitions:
                 try:
-                    usage = psutil.disk_usage(partition.mountpoint)
+                    usage: Any = psutil.disk_usage(partition.mountpoint)
                     storage_data['drives'][partition.device] = {
                         'mountpoint': partition.mountpoint,
                         'total_gb': round(usage.total / (1024**3), 2),
@@ -706,7 +2293,7 @@ class HardwareMonitorWorker(QObject):
             
             # Get disk I/O counters (overall)
             try:
-                io = psutil.disk_io_counters()
+                io: Any = psutil.disk_io_counters()
                 if io:
                     storage_data['io_counters'] = {
                         'read_bytes': io.read_bytes,
@@ -722,15 +2309,38 @@ class HardwareMonitorWorker(QObject):
         
         return storage_data
     
-    def run(self):
+    def run(self) -> None:
         """Main monitoring loop running in separate thread"""
         self.is_running = True
         logger.info("Hardware monitor worker thread started")
         
-        loop_count = 0
+        loop_count: int = 0
         while self.is_running:
             try:
-                stats_dict = {}
+                # Combat Mode Check
+                apex_active = self.check_apex_active()
+                if apex_active and not self.combat_mode_active:
+                    self.combat_mode_active = True
+                    self.user_polling_interval = self.polling_interval
+                    self.polling_interval = 5.0
+                    logger.warning("[SYS] COMBAT_MODE_ACTIVE: Polling throttled to 5s")
+                elif not apex_active and self.combat_mode_active:
+                    self.combat_mode_active = False
+                    self.polling_interval = self.user_polling_interval
+                    logger.info("[SYS] COMBAT_MODE_DEACTIVATED: Polling restored")
+                
+                # Blacklist Check
+                for proc in psutil.process_iter(['name']):
+                    try:
+                        proc_name = proc.info['name'].lower()
+                        for blacklisted in BLACKLISTED_PROCESSES:
+                            if blacklisted.lower() in proc_name:
+                                logger.critical(f"[SEC] BLACKLISTED_PROCESS_DETECTED: {proc.info['name']}")
+                                break
+                    except:
+                        pass
+                
+                stats_dict: Dict[str, float] = {}
                 
                 # CPU and RAM
                 stats_dict['cpu_usage'] = float(psutil.cpu_percent(interval=None))
@@ -751,13 +2361,10 @@ class HardwareMonitorWorker(QObject):
                 try:
                     if hasattr(psutil, "sensors_temperatures"):
                         temps_fn = getattr(psutil, "sensors_temperatures", None)
-                        if temps_fn is not None:
-                            temps = temps_fn()
-                        else:
-                            temps = None
-                        if temps and 'coretemp' in temps:
+                        temps: Any = temps_fn() if temps_fn is not None else None
+                        if temps is not None and 'coretemp' in temps:
                             stats_dict['cpu_temp'] = float(temps['coretemp'][0].current)
-                        elif temps and 'cpu_thermal' in temps:
+                        elif temps is not None and 'cpu_thermal' in temps:
                             stats_dict['cpu_temp'] = float(temps['cpu_thermal'][0].current)
                         else:
                             stats_dict['cpu_temp'] = 45.0
@@ -776,21 +2383,21 @@ class HardwareMonitorWorker(QObject):
                         handle = self.gpu_handle
                         
                         # Temperature
-                        stats_dict['gpu_temp'] = float(pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU))
+                        stats_dict['gpu_temp'] = float(cast(int, pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)))  # type: ignore[attr-defined]
                         
                         # Usage
-                        utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                        utilization = cast(Any, pynvml.nvmlDeviceGetUtilizationRates(handle))  # type: ignore[attr-defined]
                         stats_dict['gpu_usage'] = float(utilization.gpu)
                         
                         # VRAM
-                        memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                        memory = cast(Any, pynvml.nvmlDeviceGetMemoryInfo(handle))  # type: ignore[attr-defined]
                         stats_dict['gpu_vram_used'] = float(memory.used) / 1024 / 1024 / 1024
                         stats_dict['gpu_vram_total'] = float(memory.total) / 1024 / 1024 / 1024
                         stats_dict['gpu_vram_percent'] = (float(memory.used) / float(memory.total)) * 100
                         
                         # Fan speed
                         try:
-                            fan_speed = pynvml.nvmlDeviceGetFanSpeed(handle)
+                            fan_speed = cast(int, pynvml.nvmlDeviceGetFanSpeed(handle))  # type: ignore[attr-defined]
                             stats_dict['gpu_fan_speed'] = float(fan_speed)
                         except Exception as e:
                             error_type = type(e).__name__
@@ -799,7 +2406,7 @@ class HardwareMonitorWorker(QObject):
                         
                         # Power Draw (milliwatts -> watts)
                         try:
-                            power_mw = pynvml.nvmlDeviceGetPowerUsage(handle)
+                            power_mw = cast(int, pynvml.nvmlDeviceGetPowerUsage(handle))  # type: ignore[attr-defined]
                             stats_dict['gpu_power_draw'] = float(power_mw) / 1000.0  # Convert mW to W
                         except Exception as e:
                             error_type = type(e).__name__
@@ -831,36 +2438,137 @@ class HardwareMonitorWorker(QObject):
                 # Collect extended data every 2 iterations = 4 seconds to reduce overhead
                 loop_count += 1
                 if loop_count % 2 == 0:
-                    processes = self.collect_top_processes()
+                    processes: List[Tuple[int, str, float, float]] = self.collect_top_processes()
                     if processes:
                         self.processes_updated.emit(processes)
                     
-                    gpu_advanced = self.collect_gpu_advanced()
+                    gpu_advanced: Dict[str, Any] = self.collect_gpu_advanced()
                     self.gpu_advanced_updated.emit(gpu_advanced)
                     
-                    storage = self.collect_storage_data()
+                    storage: Dict[str, Any] = self.collect_storage_data()
+                    # Calculate real-time disk I/O MB/s
+                    try:
+                        current_io = psutil.disk_io_counters()
+                        if current_io and self.last_disk_io:
+                            read_delta = current_io.read_bytes - self.last_disk_io.read_bytes
+                            write_delta = current_io.write_bytes - self.last_disk_io.write_bytes
+                            # Convert to MB/s (divide by interval and convert bytes to MB)
+                            storage['io_read_mbs'] = (read_delta / self.polling_interval) / (1024 * 1024)
+                            storage['io_write_mbs'] = (write_delta / self.polling_interval) / (1024 * 1024)
+                        else:
+                            storage['io_read_mbs'] = 0.0
+                            storage['io_write_mbs'] = 0.0
+                        self.last_disk_io = current_io
+                    except Exception as e:
+                        logger.debug(f"Disk I/O rate calculation error: {e}")
+                        storage['io_read_mbs'] = 0.0
+                        storage['io_write_mbs'] = 0.0
                     self.storage_updated.emit(storage)
                     
-                    # Collect network data
+                    # Ping/Jitter Analysis
+                    avg_ping, jitter = 0.0, 0.0
                     try:
-                        net_io = psutil.net_io_counters()
-                        network_data = {
-                            'downloaded': net_io.bytes_recv / 1024 / 1024,  # Convert to MB
-                            'uploaded': net_io.bytes_sent / 1024 / 1024,    # Convert to MB
-                        }
-                        self.network_updated.emit(network_data)
+                        avg_ping, jitter = self.network_analyzer.measure_ping_jitter()
                     except Exception as e:
-                        error_type = type(e).__name__
+                        logger.debug(f"Ping/jitter measurement error: {e}")
+                    
+                    # Collect network data (multi-adapter support)
+                    try:
+                        # Get all network interfaces
+                        current_net_io = psutil.net_io_counters(pernic=True)
+                        
+                        # Initialize available NICs list and select first active one
+                        if not self.available_nics:
+                            self.available_nics = list(psutil.net_if_addrs().keys())
+                            # Select first active NIC with traffic
+                            for nic in self.available_nics:
+                                if nic in current_net_io and current_net_io[nic].bytes_recv > 0:
+                                    self.selected_nic = nic
+                                    logger.info(f"[NET] Selected primary adapter: {nic}")
+                                    break
+                            # Fallback to first available if none have traffic
+                            if not self.selected_nic and self.available_nics:
+                                self.selected_nic = self.available_nics[0]
+                        
+                        # Calculate deltas for all adapters
+                        net_stats: Dict[str, Dict[str, float]] = {}
+                        
+                        if current_net_io and self.last_net_io:
+                            for adapter_name, current_stats in current_net_io.items():
+                                if adapter_name in self.last_net_io:
+                                    last_stats = self.last_net_io[adapter_name]
+                                    
+                                    # Calculate deltas
+                                    rx_delta = current_stats.bytes_recv - last_stats.bytes_recv
+                                    tx_delta = current_stats.bytes_sent - last_stats.bytes_sent
+                                    
+                                    # Convert to MB/s
+                                    rx_mbs = (rx_delta / self.polling_interval) / (1024 * 1024)
+                                    tx_mbs = (tx_delta / self.polling_interval) / (1024 * 1024)
+                                    
+                                    net_stats[adapter_name] = {
+                                        'rx': max(0.0, rx_mbs),  # Prevent negative values
+                                        'tx': max(0.0, tx_mbs),
+                                        'total_rx_mb': current_stats.bytes_recv / (1024 * 1024),
+                                        'total_tx_mb': current_stats.bytes_sent / (1024 * 1024)
+                                    }
+                        
+                        # Store current state for next iteration
+                        self.last_net_io = current_net_io
+                        
+                        # Emit only selected NIC data to save performance
+                        if self.selected_nic and self.selected_nic in net_stats:
+                            selected_stats = net_stats[self.selected_nic]
+                            
+                            # Get bandwidth hogs
+                            network_hogs: List[Tuple[str, int]] = []
+                            try:
+                                self.network_analyzer.analyze_bandwidth_hogs()
+                                hogs_dict = self.network_analyzer.current_bandwidth_hogs
+                                network_hogs = [(name, count) for name, count in hogs_dict.items()]
+                            except Exception as e:
+                                logger.debug(f"Bandwidth hogs error: {e}")
+                            
+                            network_data: Dict[str, Any] = {
+                                'adapter': self.selected_nic,
+                                'rx_mbs': selected_stats['rx'],
+                                'tx_mbs': selected_stats['tx'],
+                                'downloaded': selected_stats['total_rx_mb'],
+                                'uploaded': selected_stats['total_tx_mb'],
+                                'ping': avg_ping,
+                                'jitter': jitter,
+                                'network_hogs': network_hogs,
+                                'all_adapters': net_stats  # Include all for advanced view
+                            }
+                            self.network_updated.emit(network_data)
+                        elif current_net_io:
+                            # Fallback: emit aggregate data if no NIC selected
+                            total_rx = sum(s.bytes_recv for s in current_net_io.values()) / (1024 * 1024)
+                            total_tx = sum(s.bytes_sent for s in current_net_io.values()) / (1024 * 1024)
+                            network_data = {
+                                'adapter': 'Aggregate',
+                                'rx_mbs': 0.0,
+                                'tx_mbs': 0.0,
+                                'downloaded': total_rx,
+                                'uploaded': total_tx,
+                                'ping': avg_ping,
+                                'jitter': jitter,
+                                'network_hogs': [],
+                                'all_adapters': {}
+                            }
+                            self.network_updated.emit(network_data)
+                    except Exception as e:
+                        error_type: str = type(e).__name__
                         logger.debug(f"Network data collection error ({error_type}): {e}")
                 
-                # Sleep to match 2-second update interval
-                time.sleep(2.0)
+                # Sleep to match polling interval
+                time.sleep(self.polling_interval)
                 
             except Exception as e:
                 logger.error(f"Hardware monitor worker error: {e}")
                 time.sleep(2.0)
     
-    def stop(self):
+    def stop(self) -> None:
         """Stop the monitoring loop"""
         self.is_running = False
         logger.info("Hardware monitor worker thread stopping")
@@ -868,7 +2576,7 @@ class HardwareMonitorWorker(QObject):
 class VitreosArchitect(QMainWindow):
     """Main application window with advanced liquid glass aesthetics"""
     
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         logger.info("Initializing Vitreos Architect application")
         
@@ -879,36 +2587,112 @@ class VitreosArchitect(QMainWindow):
             sys.exit(1)
             
         # Application state
-        self.is_running = False
-        self.stats = SystemStats()
-        self.config = self.load_config()
+        self.is_running: bool = False
+        self.stats: SystemStats = SystemStats()
+        self.config: ConfigDict = self.load_config()
         
         # Hardware monitoring worker and thread
-        self.monitor_worker = None
-        self.monitor_thread = None
+        self.monitor_worker: Optional[HardwareMonitorWorker] = None
+        self.monitor_thread: Optional[QThread] = None
         
         # Frameless window dragging state
-        self.is_dragging = False
-        self.drag_position = None
-        self.header_widget = None
+        self.is_dragging: bool = False
+        self.drag_position: Optional[QPoint] = None
+        self.header_widget: Optional[QFrame] = None
         
         # System tray icon
-        self.tray_icon = None
-        
-        # Advanced monitoring systems
-        self.security_monitor = SecurityMonitor()
-        self.network_analyzer = NetworkAnalyzer()
-        self.predictive_alert = PredictiveThermalAlert()
+        self.tray_icon: Optional[QSystemTrayIcon] = None
         
         # Database for hardware history
-        from vitreos_db import VitreosDatabase
-        self.database = VitreosDatabase()
-        self.db_write_counter = 0  # Counter for 60-second throttling
+        from vitreos_db import VitreosDB
+        self.database: VitreosDB = VitreosDB()
+        self.db_write_counter: int = 0  # Counter for 60-second throttling
+        
+        # Advanced monitoring systems
+        self.security_monitor: SecurityMonitor = SecurityMonitor()
+        self.network_analyzer: NetworkAnalyzer = NetworkAnalyzer()
+        self.predictive_alert: PredictiveThermalAlert = PredictiveThermalAlert()
+        self.alert_manager: AlertManager = AlertManager(self.tray_icon, self.database)
         
         # HUD mode state
-        self.hud_mode_active = False
-        self.normal_geometry = None  # Store normal window geometry when entering HUD mode
-        self.mini_mode_button = None  # Reference to mini mode button for text updates
+        self.hud_mode_active: bool = False
+        self.normal_geometry: Optional[Any] = None  # Store normal window geometry when entering HUD mode
+        self.mini_mode_button: Optional[QPushButton] = None  # Reference to mini mode button for text updates
+        
+        # UI Components - explicitly typed
+        self.status_bar: QStatusBar
+        self.webhook_input: QLineEdit
+        self.console_output: QPlainTextEdit
+        self.pulse_log_widget: SystemPulseLog
+        
+        # Module content widgets
+        self.cpu_content: CPUMonitorModule
+        self.gpu_content: GPUMonitorModule
+        self.mem_content: MemoryArrayModule
+        self.disk_content: DiskArrayModule
+        self.net_content: NetworkInterfaceModule
+        self.thermal_content: ThermalControlModule
+        
+        # Monitoring cards - explicitly typed
+        self.cpu_temp_card: LiquidGlassCard
+        self.gpu_temp_card: LiquidGlassCard
+        self.cpu_usage_card: LiquidGlassCard
+        self.gpu_usage_card: LiquidGlassCard
+        self.gpu_vram_card: LiquidGlassCard
+        self.gpu_fan_card: LiquidGlassCard
+        self.ram_card: LiquidGlassCard
+        self.disk_card: LiquidGlassCard
+        self.power_card: LiquidGlassCard
+        self.predictive_card: LiquidGlassCard
+        self.ping_card: LiquidGlassCard
+        self.jitter_card: LiquidGlassCard
+        self.download_card: LiquidGlassCard
+        self.uploaded_card: LiquidGlassCard
+        self.gpu_clock_card: LiquidGlassCard
+        self.gpu_power_card: LiquidGlassCard
+        self.gpu_temp_pro_card: LiquidGlassCard
+        self.gpu_memory_pro_card: LiquidGlassCard
+        self.gpu_hotspot_card: LiquidGlassCard
+        self.read_bytes_card: LiquidGlassCard
+        self.write_bytes_card: LiquidGlassCard
+        self.read_count_card: LiquidGlassCard
+        self.write_count_card: LiquidGlassCard
+        
+        # New segmented widgets
+        self.cpu_thread_matrix: CPUThreadMatrix
+        self.gpu_circular_hud: GPUCircularHUD
+        self.network_waveform: NetworkWaveform
+        
+        # Tournament features
+        self.polling_slider: Any
+        self.polling_label: Any
+        self.generate_report_btn: Any
+        self.security_breach: bool = False
+        self.breach_flicker_timer: QTimer = QTimer(self)
+        self.breach_flicker_state: bool = False
+        self.breach_flicker_timer.timeout.connect(self.toggle_breach_flicker)  # type: ignore
+        
+        # Tables - explicitly typed
+        self.hogs_table: QTableWidget
+        self.processes_table: QTableWidget
+        self.drives_table: QTableWidget
+        self.events_table: QTableWidget
+        self.logbook_list_widget: QTextEdit
+        
+        # Progress bars and other widgets
+        self.vram_progress_bar: QProgressBar
+        self.security_toggle: QPushButton
+        self.clear_events_btn: QPushButton
+        self.kill_zombie_btn: QPushButton
+        self.webhook_test_btn: QPushButton
+        self.screenshot_btn: QPushButton
+        self.reset_config_btn: QPushButton
+        self.remote_webhook_url_input: QLineEdit
+        self.alert_high_temp: QCheckBox
+        self.alert_high_gpu: QCheckBox
+        self.alert_high_cpu: QCheckBox
+        self.alert_disk_full: QCheckBox
+        self.startup_checkbox: QCheckBox
         
         # Setup window
         logger.info("Setting up application window")
@@ -921,45 +2705,41 @@ class VitreosArchitect(QMainWindow):
         self.setup_monitoring()
         logger.info("Monitoring systems initialized")
         
-    def show_error_dialog(self, message: str):
+    def show_error_dialog(self, message: str) -> None:
         """Show error dialog for missing dependencies"""
-        msg = QMessageBox()
+        msg: QMessageBox = QMessageBox()
         msg.setIcon(QMessageBox.Icon.Critical)
         msg.setText(message)
         msg.setWindowTitle("Missing Dependencies")
         msg.exec()
         
-    def setup_window(self):
+    def setup_window(self) -> None:
         """Setup main window properties"""
         self.setWindowTitle("Vitreos • Architect Edition")
         self.setGeometry(100, 100, 1400, 900)
         self.setMinimumSize(1200, 700)
         
         # Set window icon from resource path
-        icon_path = resource_path("logo.ico")
-        window_icon = QIcon(icon_path)
+        icon_path: str = resource_path("logo.ico")
+        window_icon: QIcon = QIcon(icon_path)
         if not window_icon.isNull():
             self.setWindowIcon(window_icon)
         else:
             # Fallback to system theme
             self.setWindowIcon(QIcon.fromTheme("system-monitor"))
         
-        # Remove window frame for true glass effect
+        # Remove window frame for cyberdeck aesthetic
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
-        # Premium Glass Background - Solid dark color for stability
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(26, 26, 46))  # #1a1a2e solid
+        # Cyberdeck Background - Absolute dark
+        palette: QPalette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(8, 8, 10))  # #08080a
         self.setPalette(palette)
-        
-        # Fix invisible background - enable proper background rendering
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
         
         # Center window
         self.center_window()
         
-    def setup_system_tray(self):
+    def setup_system_tray(self) -> None:
         """Setup system tray icon with context menu"""
         try:
             # Create tray icon
@@ -984,31 +2764,31 @@ class VitreosArchitect(QMainWindow):
             # Create context menu
             tray_menu = QMenu(self)
             
-            show_action = tray_menu.addAction("Show")
+            show_action = tray_menu.addAction("Show")  # type: ignore[reportUnknownMemberType]
             if show_action is not None:
-                show_action.triggered.connect(self.show_window)
+                show_action.triggered.connect(self.show_window)  # type: ignore[arg-type]
             
-            hide_action = tray_menu.addAction("Hide")
+            hide_action = tray_menu.addAction("Hide")  # type: ignore[reportUnknownMemberType]
             if hide_action is not None:
-                hide_action.triggered.connect(self.hide_window)
+                hide_action.triggered.connect(self.hide_window)  # type: ignore[arg-type]
             
             tray_menu.addSeparator()
             
-            exit_action = tray_menu.addAction("Exit")
+            exit_action = tray_menu.addAction("Exit")  # type: ignore[reportUnknownMemberType]
             if exit_action is not None:
-                exit_action.triggered.connect(self.exit_application)
+                exit_action.triggered.connect(self.exit_application)  # type: ignore[arg-type]
             
             self.tray_icon.setContextMenu(tray_menu)
             
             # Handle tray icon click (show/hide on single click)
-            self.tray_icon.activated.connect(self.on_tray_icon_activated)
+            self.tray_icon.activated.connect(self.on_tray_icon_activated)  # type: ignore
             
             self.tray_icon.show()
             logger.info("System tray icon initialized")
         except Exception as e:
             logger.error(f"Failed to initialize system tray: {e}")
     
-    def on_tray_icon_activated(self, reason):
+    def on_tray_icon_activated(self, reason: Any) -> None:
         """Handle tray icon activation"""
         from PyQt6.QtWidgets import QSystemTrayIcon as STI
         if reason == STI.ActivationReason.DoubleClick:
@@ -1017,16 +2797,16 @@ class VitreosArchitect(QMainWindow):
             else:
                 self.show_window()
     
-    def show_window(self):
+    def show_window(self) -> None:
         """Show the window from tray"""
         self.showNormal()
         self.activateWindow()
     
-    def hide_window(self):
+    def hide_window(self) -> None:
         """Hide the window to tray"""
         self.hide()
     
-    def exit_application(self):
+    def exit_application(self) -> None:
         """Exit the application completely"""
         logger.info("Exit action triggered from tray")
         # Stop the hardware monitor worker thread
@@ -1049,93 +2829,124 @@ class VitreosArchitect(QMainWindow):
         from PyQt6.QtWidgets import QApplication
         QApplication.quit()
         
-    def center_window(self):
+    def center_window(self) -> None:
         """Center window on screen"""
-        screen = QApplication.primaryScreen()
+        screen: Optional[Any] = QApplication.primaryScreen()
         if screen is not None:
-            screen_geometry = screen.geometry()
-            window = self.geometry()
-            x = int((screen_geometry.width() - window.width()) / 2)
-            y = int((screen_geometry.height() - window.height()) / 2)
+            screen_geometry: Any = screen.geometry()
+            window: Any = self.geometry()
+            x: int = int((screen_geometry.width() - window.width()) / 2)
+            y: int = int((screen_geometry.height() - window.height()) / 2)
             self.move(x, y)
         
-    def setup_ui(self):
-        """Setup the main user interface with tabs"""
+    def setup_ui(self) -> None:
+        """Setup the main user interface with tab navigation"""
         # Main widget and layout
         main_widget = QWidget()
-        main_widget.setStyleSheet("background-color: #1a1a2e;")
-        main_layout = QVBoxLayout(main_widget)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(20)
+        main_widget.setStyleSheet("background-color: #08080a;")
+        main_layout = QHBoxLayout(main_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Left Column: System Pulse Log
+        pulse_log_widget = SystemPulseLog()
+        self.pulse_log_widget = pulse_log_widget
+        main_layout.addWidget(pulse_log_widget)
+        
+        # Right side: Main content area
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(10, 10, 10, 10)
+        content_layout.setSpacing(5)
         
         # Header with title and controls
         header_widget = self.create_header()
-        main_layout.addWidget(header_widget)
+        content_layout.addWidget(header_widget)
         
-        # Tab widget for different monitoring areas
+        # Tab widget for navigation
+        from PyQt6.QtWidgets import QTabWidget
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet("""
             QTabWidget::pane {
-                border: none;
-                background-color: transparent;
+                border: 1px solid #bc13fe;
+                background-color: #08080a;
             }
             QTabBar::tab {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
+                background-color: #1a1a1e;
+                color: #888888;
+                border: 1px solid #2a2a2e;
                 padding: 8px 16px;
-                margin: 0 4px;
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
+                margin-right: 2px;
+                font-family: 'Courier New', 'Consolas', monospace;
+                font-size: 9pt;
             }
             QTabBar::tab:selected {
-                background-color: rgba(255, 255, 255, 0.2);
-                border-color: #00f2ff;
+                background-color: #bc13fe;
+                color: #ffffff;
+                font-weight: bold;
+            }
+            QTabBar::tab:hover {
+                background-color: #2a2a2e;
                 color: #00f2ff;
             }
         """)
         
-        # Create tabs in correct order
-        self.create_vitals_tab()          # 1
-        self.create_network_tab()         # 2
-        self.create_processes_tab()       # 3 - NEW
-        self.create_gpu_pro_tab()         # 4 - NEW
-        self.create_security_tab()        # 5
-        self.create_storage_tab()         # 6 - NEW
-        self.create_logbook_tab()         # 7
-        self.create_remote_tab()          # 8 - NEW
-        self.create_console_tab()         # 9
-        self.create_settings_tab()        # 10
+        content_layout.addWidget(self.tab_widget)
+        main_layout.addWidget(content_widget)
         
-        main_layout.addWidget(self.tab_widget)
+        # Create all tabs
+        self.create_vitals_tab()
+        self.create_network_tab()
+        self.create_processes_tab()
+        self.create_gpu_pro_tab()
+        self.create_storage_tab()
+        self.create_security_tab()
+        self.create_logbook_tab()
+        self.create_console_tab()
+        self.create_remote_tab()
+        self.create_settings_tab()
         
         # Status bar
         self.status_bar = QStatusBar()
         self.status_bar.setStyleSheet("""
             QStatusBar {
-                background-color: rgba(255, 255, 255, 0.05);
-                color: #888888;
-                border-top: 1px solid rgba(255, 255, 255, 0.1);
-                font-size: 11px;
+                background-color: #08080a;
+                color: #00f2ff;
+                border-top: 2px solid #bc13fe;
+                font-family: 'Courier New', 'Consolas', monospace;
+                font-size: 8pt;
             }
         """)
         self.setStatusBar(self.status_bar)
         
         self.setCentralWidget(main_widget)
         
-        # Apply glass stylesheet
+        # Apply cyberdeck stylesheet with scanline effect and global transparency
         self.setStyleSheet("""
             QMainWindow {
-                background-color: transparent;
+                background: #08080a;
+                background-image: linear-gradient(0deg, transparent 50%, rgba(188, 19, 254, 0.03) 50%);
+                background-size: 100% 4px;
             }
             QWidget {
                 background-color: transparent;
-                font-family: 'Segoe UI', Arial, sans-serif;
+                font-family: 'Consolas', 'Courier New', monospace;
+            }
+            QLabel {
+                background: transparent;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 8pt;
+                color: rgba(255, 255, 255, 0.6);
+            }
+            VitreosModule QWidget {
+                background: transparent;
+            }
+            QGroupBox {
+                background: transparent;
             }
         """)
         
-    def create_header(self):
+    def create_header(self) -> QFrame:
         """Create the header with title and controls"""
         # Create a widget to serve as the drag handle
         header_widget = QFrame()
@@ -1153,23 +2964,24 @@ class VitreosArchitect(QMainWindow):
         
         # Title section
         title_layout = QVBoxLayout()
-        title_label = QLabel("💎 VITREOS")
+        title_label = QLabel("[VITREOS::CYBERDECK]")
         title_label.setStyleSheet("""
             QLabel {
-                color: #00f2ff;
-                font-size: 24px;
-                font-weight: 800;
-                text-transform: uppercase;
-                letter-spacing: 3px;
+                color: #bc13fe;
+                font-family: 'Courier New', 'Consolas', monospace;
+                font-size: 14pt;
+                font-weight: bold;
+                letter-spacing: 2px;
             }
         """)
         
-        subtitle_label = QLabel("Intelligence through Transparency")
+        subtitle_label = QLabel(">INFORMATION_OVERLOAD")
         subtitle_label.setStyleSheet("""
             QLabel {
-                color: #888888;
-                font-size: 12px;
-                font-weight: 400;
+                color: #00f2ff;
+                font-family: 'Courier New', 'Consolas', monospace;
+                font-size: 8pt;
+                font-weight: normal;
             }
         """)
         
@@ -1180,61 +2992,64 @@ class VitreosArchitect(QMainWindow):
         controls_layout = QHBoxLayout()
         
         # Mini Mode (HUD) button
-        self.mini_mode_button = QPushButton("⊞")
-        self.mini_mode_button.setFixedSize(30, 30)
+        self.mini_mode_button = QPushButton("[_]")
+        self.mini_mode_button.setFixedSize(35, 20)
         self.mini_mode_button.setStyleSheet("""
             QPushButton {
-                background-color: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                color: #ffffff;
-                font-size: 16px;
+                background-color: #08080a;
+                border: 1px solid #bc13fe;
+                border-radius: 0px;
+                color: #bc13fe;
+                font-family: 'Courier New', 'Consolas', monospace;
+                font-size: 8pt;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.2);
-                border-color: rgba(255, 255, 255, 0.4);
+                background-color: #bc13fe;
+                color: #08080a;
             }
         """)
-        self.mini_mode_button.clicked.connect(self.toggle_hud_mode)
+        self.mini_mode_button.clicked.connect(self.toggle_hud_mode)  # type: ignore
         
         # Minimize button
-        minimize_btn = QPushButton("—")
-        minimize_btn.setFixedSize(30, 30)
+        minimize_btn = QPushButton("[-]")
+        minimize_btn.setFixedSize(35, 20)
         minimize_btn.setStyleSheet("""
             QPushButton {
-                background-color: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                color: #ffffff;
-                font-size: 16px;
+                background-color: #08080a;
+                border: 1px solid #00f2ff;
+                border-radius: 0px;
+                color: #00f2ff;
+                font-family: 'Courier New', 'Consolas', monospace;
+                font-size: 8pt;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.2);
-                border-color: rgba(255, 255, 255, 0.4);
+                background-color: #00f2ff;
+                color: #08080a;
             }
         """)
-        minimize_btn.clicked.connect(self.showMinimized)
+        minimize_btn.clicked.connect(self.showMinimized)  # type: ignore
         
         # Close button
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(30, 30)
+        close_btn = QPushButton("[X]")
+        close_btn.setFixedSize(35, 20)
         close_btn.setStyleSheet("""
             QPushButton {
-                background-color: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                color: #ffffff;
-                font-size: 14px;
+                background-color: #08080a;
+                border: 1px solid #ff8c00;
+                border-radius: 0px;
+                color: #ff8c00;
+                font-family: 'Courier New', 'Consolas', monospace;
+                font-size: 8pt;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #ff4444;
-                border-color: #ff6666;
+                background-color: #ff8c00;
+                color: #08080a;
             }
         """)
-        close_btn.clicked.connect(self.close)
+        close_btn.clicked.connect(self.close)  # type: ignore
         
         controls_layout.addWidget(self.mini_mode_button)
         controls_layout.addWidget(minimize_btn)
@@ -1246,14 +3061,14 @@ class VitreosArchitect(QMainWindow):
         
         return header_widget
     
-    def toggle_hud_mode(self):
+    def toggle_hud_mode(self) -> None:
         """Toggle between normal and mini HUD mode"""
         if self.hud_mode_active:
             self.restore_from_hud()
         else:
             self.enter_hud_mode()
     
-    def enter_hud_mode(self):
+    def enter_hud_mode(self) -> None:
         """Enter mini overlay mode - shrink window, hide tabs"""
         self.hud_mode_active = True
         
@@ -1261,7 +3076,8 @@ class VitreosArchitect(QMainWindow):
         self.normal_geometry = self.geometry()
         
         # Hide tabs and sidebar
-        self.tab_widget.hide()
+        if hasattr(self, 'tab_widget'):
+            self.tab_widget.hide()
         self.status_bar.hide()
         
         # Update button text (null-safe)
@@ -1284,7 +3100,7 @@ class VitreosArchitect(QMainWindow):
         
         logger.info("Entered HUD mode")
     
-    def restore_from_hud(self):
+    def restore_from_hud(self) -> None:
         """Restore normal mode from HUD overlay"""
         self.hud_mode_active = False
         
@@ -1292,7 +3108,8 @@ class VitreosArchitect(QMainWindow):
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
         
         # Show tabs and status bar
-        self.tab_widget.show()
+        if hasattr(self, 'tab_widget'):
+            self.tab_widget.show()
         self.status_bar.show()
         
         # Update button text (null-safe)
@@ -1308,8 +3125,8 @@ class VitreosArchitect(QMainWindow):
         
         logger.info("Exited HUD mode")
         
-    def create_vitals_tab(self):
-        """Create the Vitals tab with core system monitoring"""
+    def create_vitals_tab(self) -> None:
+        """Create the Vitals tab with 3x2 hardware grid"""
         vitals_widget = QWidget()
         vitals_layout = QVBoxLayout(vitals_widget)
         vitals_layout.setSpacing(10)
@@ -1327,58 +3144,62 @@ class VitreosArchitect(QMainWindow):
         """)
         vitals_layout.addWidget(tab_title)
         
-        # Create monitoring grid
+        # Create 3x2 hardware grid with tight spacing
         grid_layout = QGridLayout()
-        grid_layout.setSpacing(10)
-        grid_layout.setContentsMargins(10, 10, 10, 10)
+        grid_layout.setSpacing(5)
+        grid_layout.setContentsMargins(5, 5, 5, 5)
         
-        # Create advanced monitoring cards
-        self.cpu_temp_card = LiquidGlassCard("CPU Temperature")
-        self.cpu_temp_card.update_value(0, "°C", "Normal", "#00f2ff")
+        # Create module windows for 3x2 grid
+        # Top Row: Processing (CPU, GPU, Memory)
+        self.cpu_window = VitreosModule("CPU_MONITOR")
+        cpu_content = CPUMonitorModule()
+        cpu_content.parent_module = self.cpu_window
+        self.cpu_window.set_content(cpu_content)
+        self.cpu_content = cpu_content
         
-        self.gpu_temp_card = LiquidGlassCard("GPU Temperature") 
-        self.gpu_temp_card.update_value(0, "°C", "Normal", "#7c32ff")
+        self.gpu_window = VitreosModule("GPU_MONITOR")
+        gpu_content = GPUMonitorModule()
+        gpu_content.parent_module = self.gpu_window
+        self.gpu_window.set_content(gpu_content)
+        self.gpu_content = gpu_content
         
-        self.cpu_usage_card = LiquidGlassCard("CPU Usage")
-        self.cpu_usage_card.update_value(0, "%", "Normal", "#00d2ff")
+        self.mem_window = VitreosModule("MEM_ARRAY")
+        mem_content = MemoryArrayModule()
+        self.mem_window.set_content(mem_content)
+        self.mem_content = mem_content
         
-        self.gpu_usage_card = LiquidGlassCard("GPU Usage")
-        self.gpu_usage_card.update_value(0, "%", "Normal", "#ff6b6b")
+        # Bottom Row: I/O (Network, Thermal, Disk)
+        self.net_window = VitreosModule("NET_INTERFACE")
+        net_content = NetworkInterfaceModule()
+        self.net_window.set_content(net_content)
+        self.net_content = net_content
         
-        self.gpu_vram_card = LiquidGlassCard("VRAM Usage")
-        self.gpu_vram_card.update_value(0, "GB", "Normal", "#4ade80")
+        self.thermal_window = VitreosModule("THERMAL_CTRL")
+        thermal_content = ThermalControlModule()
+        thermal_content.parent_module = self.thermal_window
+        self.thermal_window.set_content(thermal_content)
+        self.thermal_content = thermal_content
         
-        self.gpu_fan_card = LiquidGlassCard("GPU Fan Speed")
-        self.gpu_fan_card.update_value(0, "%", "Normal", "#ffd700")
+        self.disk_window = VitreosModule("DISK_ARRAY")
+        disk_content = DiskArrayModule()
+        self.disk_window.set_content(disk_content)
+        self.disk_content = disk_content
         
-        self.ram_card = LiquidGlassCard("Memory Usage")
-        self.ram_card.update_value(0, "%", "Normal", "#4ade80")
+        # Place modules in 3x2 grid - Spatial Hierarchy:
+        # Top Row (Processing): CPU -> GPU -> Memory
+        grid_layout.addWidget(self.cpu_window, 0, 0)      # Top Left
+        grid_layout.addWidget(self.gpu_window, 0, 1)      # Top Middle
+        grid_layout.addWidget(self.mem_window, 0, 2)      # Top Right
         
-        self.disk_card = LiquidGlassCard("Disk Usage")
-        self.disk_card.update_value(0, "%", "Normal", "#ffd700")
-        
-        self.power_card = LiquidGlassCard("Power Draw")
-        self.power_card.update_value(0, "W", "Normal", "#ff4444")
-        
-        self.predictive_card = LiquidGlassCard("Thermal Prediction")
-        self.predictive_card.update_value(0, "s", "Stable", "#4ade80")
-        
-        # Add cards to grid
-        grid_layout.addWidget(self.cpu_temp_card, 0, 0)
-        grid_layout.addWidget(self.gpu_temp_card, 0, 1)
-        grid_layout.addWidget(self.cpu_usage_card, 0, 2)
-        grid_layout.addWidget(self.gpu_usage_card, 1, 0)
-        grid_layout.addWidget(self.gpu_vram_card, 1, 1)
-        grid_layout.addWidget(self.gpu_fan_card, 1, 2)
-        grid_layout.addWidget(self.ram_card, 2, 0)
-        grid_layout.addWidget(self.disk_card, 2, 1)
-        grid_layout.addWidget(self.power_card, 2, 2)
-        grid_layout.addWidget(self.predictive_card, 3, 0, 1, 3)
+        # Bottom Row (I/O): Network -> Thermal -> Disk
+        grid_layout.addWidget(self.net_window, 1, 0)      # Bottom Left
+        grid_layout.addWidget(self.thermal_window, 1, 1)  # Bottom Middle
+        grid_layout.addWidget(self.disk_window, 1, 2)     # Bottom Right
         
         vitals_layout.addLayout(grid_layout)
         self.tab_widget.addTab(vitals_widget, "Vitals")
         
-    def create_network_tab(self):
+    def create_network_tab(self) -> None:
         """Create the Network tab with advanced connectivity monitoring"""
         network_widget = QWidget()
         network_layout = QVBoxLayout(network_widget)
@@ -1394,6 +3215,76 @@ class VitreosArchitect(QMainWindow):
             }
         """)
         network_layout.addWidget(tab_title)
+        
+        # Adapter selector
+        from PyQt6.QtWidgets import QComboBox
+        adapter_container = QWidget()
+        adapter_layout = QHBoxLayout(adapter_container)
+        adapter_layout.setContentsMargins(0, 0, 0, 5)
+        
+        adapter_label = QLabel("[ADAPTER_SELECT]")
+        adapter_label.setStyleSheet("""
+            QLabel {
+                color: #bc13fe;
+                font-family: 'Consolas', monospace;
+                font-size: 9pt;
+                font-weight: bold;
+            }
+        """)
+        
+        self.network_adapter_combo = QComboBox()
+        self.network_adapter_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #08080a;
+                border: 1px solid #bc13fe;
+                border-radius: 0px;
+                color: #00f2ff;
+                font-family: 'Consolas', monospace;
+                font-size: 8pt;
+                padding: 3px 8px;
+                min-width: 200px;
+            }
+            QComboBox:hover {
+                border: 1px solid #00f2ff;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 6px solid #bc13fe;
+                margin-right: 5px;
+            }
+            QListView {
+                background-color: #08080a;
+                border: 1px solid #bc13fe;
+                outline: none;
+            }
+            QListView::item {
+                color: #00f2ff;
+                padding: 4px;
+            }
+            QListView::item:hover, QListView::item:selected {
+                background-color: #bc13fe;
+                color: #ffffff;
+            }
+        """)
+        self.network_adapter_combo.addItem("Detecting adapters...")
+        self.network_adapter_combo.currentTextChanged.connect(lambda text: setattr(self.monitor_worker, 'selected_nic', text) if self.monitor_worker and text != "Detecting adapters..." else None)  # type: ignore
+        
+        adapter_layout.addWidget(adapter_label)
+        adapter_layout.addWidget(self.network_adapter_combo)
+        adapter_layout.addStretch()
+        
+        network_layout.addWidget(adapter_container)
+        
+        # Network Waveform Area
+        self.network_waveform = NetworkWaveform()
+        self.network_waveform.setStyleSheet("background-color: rgba(0, 0, 0, 0.3); border: 1px solid #bc13fe; border-radius: 0px;")
+        network_layout.addWidget(self.network_waveform)
         
         # Network monitoring grid
         grid_layout = QGridLayout()
@@ -1435,10 +3326,11 @@ class VitreosArchitect(QMainWindow):
         hogs_layout = QVBoxLayout(hogs_group)
         self.hogs_table = QTableWidget()
         self.hogs_table.setColumnCount(2)
-        self.hogs_table.setHorizontalHeaderLabels(["Process", "Connections"])
+        self.hogs_table.setHorizontalHeaderLabels(["Process", "Connections"])  # type: ignore[arg-type]
+        self.hogs_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         header = self.hogs_table.horizontalHeader()
         if header is not None:
-            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)  # type: ignore[arg-type]
         self.hogs_table.setStyleSheet("""
             QTableWidget {
                 background-color: rgba(255, 255, 255, 0.05);
@@ -1467,13 +3359,19 @@ class VitreosArchitect(QMainWindow):
         network_layout.addLayout(grid_layout)
         self.tab_widget.addTab(network_widget, "Network")
     
-    def create_processes_tab(self):
-        """Create the Processes tab showing top memory-consuming processes"""
+    def on_adapter_changed(self, adapter_name: str) -> None:
+        """Handle network adapter selection change."""
+        if self.monitor_worker and adapter_name != "Detecting adapters...":
+            self.monitor_worker.selected_nic = adapter_name
+            logger.info(f"[NET] Switched to adapter: {adapter_name}")
+    
+    def create_processes_tab(self) -> None:
+        """Create the Processes tab with Purge Protocol controls"""
         processes_widget = QWidget()
         processes_layout = QVBoxLayout(processes_widget)
         
         # Tab title
-        tab_title = QLabel("PROCESSES - Memory & Resource Usage")
+        tab_title = QLabel("PROCESSES - Purge Protocol")
         tab_title.setStyleSheet("""
             QLabel {
                 color: #ffffff;
@@ -1484,19 +3382,43 @@ class VitreosArchitect(QMainWindow):
         """)
         processes_layout.addWidget(tab_title)
         
-        # Top processes table
-        table_group = QGroupBox("Top 10 Memory-Consuming Processes")
-        table_group.setStyleSheet("""
-            QGroupBox {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
+        # Purge Protocol Button (Large, Centered)
+        purge_btn = QPushButton("⚠ INITIATE PURGE PROTOCOL")
+        purge_btn.setFixedHeight(60)
+        purge_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 2px solid #ff8c00;
+                border-radius: 0px;
+                color: #ff8c00;
+                font-family: 'Courier New', monospace;
+                font-size: 14pt;
+                font-weight: bold;
                 padding: 15px;
             }
+            QPushButton:hover {
+                background-color: #ff8c00;
+                color: #000000;
+            }
+        """)
+        purge_btn.clicked.connect(self.execute_purge_protocol)  # type: ignore
+        processes_layout.addWidget(purge_btn)
+        
+        # Target processes table
+        table_group = QGroupBox("Target Processes")
+        table_group.setStyleSheet("""
+            QGroupBox {
+                background-color: transparent;
+                border: 1px solid #bc13fe;
+                border-radius: 0px;
+                padding: 15px;
+                margin-top: 10px;
+            }
             QGroupBox::title {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
+                color: #bc13fe;
+                font-family: 'Courier New', monospace;
+                font-size: 10pt;
+                font-weight: bold;
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
                 padding: 0 5px;
@@ -1505,37 +3427,148 @@ class VitreosArchitect(QMainWindow):
         
         table_layout = QVBoxLayout(table_group)
         self.processes_table = QTableWidget()
-        self.processes_table.setColumnCount(3)
-        self.processes_table.setHorizontalHeaderLabels(["PID", "Process Name", "Memory %"])
+        self.processes_table.setColumnCount(4)
+        self.processes_table.setHorizontalHeaderLabels(["PID", "Target", "RAM (MB)", "CPU %"])  # type: ignore[arg-type]
         header = self.processes_table.horizontalHeader()
         if header is not None:
-            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)  # type: ignore[arg-type]
         
         self.processes_table.setStyleSheet("""
             QTableWidget {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                color: #ffffff;
-                font-size: 12px;
+                background-color: transparent;
+                border: none;
+                color: #00f2ff;
+                font-family: 'Consolas', monospace;
+                font-size: 9pt;
+                gridline-color: transparent;
             }
             QTableWidget::item {
-                padding: 8px;
+                padding: 6px;
+                border-bottom: 1px solid rgba(188, 19, 254, 0.2);
             }
             QHeaderView::section {
-                background-color: rgba(255, 255, 255, 0.1);
-                color: #ffffff;
-                font-weight: 600;
+                background-color: transparent;
+                color: #bc13fe;
+                font-family: 'Courier New', monospace;
+                font-weight: bold;
+                font-size: 9pt;
                 padding: 8px;
+                border: none;
+                border-bottom: 2px solid #bc13fe;
             }
         """)
         
         table_layout.addWidget(self.processes_table)
         processes_layout.addWidget(table_group)
+        
+        # eSports Optimization Suite
+        esports_container = QWidget()
+        esports_layout = QHBoxLayout(esports_container)
+        esports_layout.setSpacing(10)
+        
+        # Left Panel: CPU Priority Engine
+        priority_group = QGroupBox("CPU Priority Engine")
+        priority_group.setStyleSheet("""
+            QGroupBox {
+                background-color: transparent;
+                border: 1px solid #00f2ff;
+                border-radius: 0px;
+                padding: 15px;
+                margin-top: 10px;
+            }
+            QGroupBox::title {
+                color: #00f2ff;
+                font-family: 'Courier New', monospace;
+                font-size: 10pt;
+                font-weight: bold;
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }
+        """)
+        
+        priority_layout = QVBoxLayout(priority_group)
+        priority_label = QLabel("Boost games to High Priority, throttle background apps to Below Normal.")
+        priority_label.setStyleSheet("color: #888888; font-family: 'Consolas'; font-size: 8pt;")
+        priority_label.setWordWrap(True)
+        priority_layout.addWidget(priority_label)
+        
+        priority_btn = QPushButton("⚡ OPTIMIZE PRIORITIES")
+        priority_btn.setFixedHeight(50)
+        priority_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid #00f2ff;
+                border-radius: 0px;
+                color: #00f2ff;
+                font-family: 'Courier New', monospace;
+                font-size: 11pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #00f2ff;
+                color: #000000;
+            }
+        """)
+        priority_btn.clicked.connect(self.optimize_cpu_priorities)  # type: ignore
+        priority_layout.addWidget(priority_btn)
+        
+        # Right Panel: Core Affinity Isolator
+        affinity_group = QGroupBox("Core Affinity Isolator")
+        affinity_group.setStyleSheet("""
+            QGroupBox {
+                background-color: transparent;
+                border: 1px solid #bc13fe;
+                border-radius: 0px;
+                padding: 15px;
+                margin-top: 10px;
+            }
+            QGroupBox::title {
+                color: #bc13fe;
+                font-family: 'Courier New', monospace;
+                font-size: 10pt;
+                font-weight: bold;
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }
+        """)
+        
+        affinity_layout = QVBoxLayout(affinity_group)
+        affinity_label = QLabel("Force background apps to last 2 CPU threads to dedicate L3 Cache to games.")
+        affinity_label.setStyleSheet("color: #888888; font-family: 'Consolas'; font-size: 8pt;")
+        affinity_label.setWordWrap(True)
+        affinity_layout.addWidget(affinity_label)
+        
+        affinity_btn = QPushButton("🔒 ISOLATE BACKGROUND APPS")
+        affinity_btn.setFixedHeight(50)
+        affinity_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid #bc13fe;
+                border-radius: 0px;
+                color: #bc13fe;
+                font-family: 'Courier New', monospace;
+                font-size: 11pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #bc13fe;
+                color: #000000;
+            }
+        """)
+        affinity_btn.clicked.connect(self.isolate_core_affinity)  # type: ignore
+        affinity_layout.addWidget(affinity_btn)
+        
+        esports_layout.addWidget(priority_group)
+        esports_layout.addWidget(affinity_group)
+        
+        processes_layout.addWidget(esports_container)
         processes_layout.addStretch()
         
         self.tab_widget.addTab(processes_widget, "Processes")
     
-    def create_gpu_pro_tab(self):
+    def create_gpu_pro_tab(self) -> None:
         """Create the GPU Pro tab with detailed NVIDIA statistics"""
         gpu_widget = QWidget()
         gpu_layout = QVBoxLayout(gpu_widget)
@@ -1575,6 +3608,10 @@ class VitreosArchitect(QMainWindow):
         # GPU Memory (from existing vitals)
         self.gpu_memory_pro_card = LiquidGlassCard("VRAM Usage")
         self.gpu_memory_pro_card.update_value(0, "%", "Normal", "#6366f1")
+
+        # GPU Hotspot
+        self.gpu_hotspot_card = LiquidGlassCard("Hotspot Temp")
+        self.gpu_hotspot_card.update_value(0, "°C", "Cool", "#00d2ff")
         
         # Add to grid
         grid_layout.addWidget(self.gpu_clock_card, 0, 0)
@@ -1582,13 +3619,33 @@ class VitreosArchitect(QMainWindow):
         grid_layout.addWidget(self.gpu_fan_card, 0, 2)
         grid_layout.addWidget(self.gpu_temp_pro_card, 1, 0)
         grid_layout.addWidget(self.gpu_memory_pro_card, 1, 1)
+        grid_layout.addWidget(self.gpu_hotspot_card, 1, 2)
+
+        # VRAM Progress Bar
+        self.vram_progress_bar = QProgressBar()
+        self.vram_progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: rgba(255, 255, 255, 0.1);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 8px;
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: 600;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #6366f1;
+                border-radius: 6px;
+            }
+        """)
+        grid_layout.addWidget(self.vram_progress_bar, 2, 0, 1, 3)
         
         gpu_layout.addLayout(grid_layout)
         gpu_layout.addStretch()
         
         self.tab_widget.addTab(gpu_widget, "GPU Pro")
     
-    def create_storage_tab(self):
+    def create_storage_tab(self) -> None:
         """Create the Storage tab with disk usage and I/O statistics"""
         storage_widget = QWidget()
         storage_layout = QVBoxLayout(storage_widget)
@@ -1627,10 +3684,10 @@ class VitreosArchitect(QMainWindow):
         drives_layout = QVBoxLayout(drives_group)
         self.drives_table = QTableWidget()
         self.drives_table.setColumnCount(5)
-        self.drives_table.setHorizontalHeaderLabels(["Drive", "Total (GB)", "Used (GB)", "Free (GB)", "Usage %"])
+        self.drives_table.setHorizontalHeaderLabels(["Drive", "Total (GB)", "Used (GB)", "Free (GB)", "Usage %"])  # type: ignore[arg-type]
         header = self.drives_table.horizontalHeader()
         if header is not None:
-            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)  # type: ignore[arg-type]
         
         self.drives_table.setStyleSheet("""
             QTableWidget {
@@ -1697,7 +3754,7 @@ class VitreosArchitect(QMainWindow):
         
         self.tab_widget.addTab(storage_widget, "Storage")
     
-    def create_security_tab(self):
+    def create_security_tab(self) -> None:
         """Create the Security tab with advanced monitoring"""
         security_widget = QWidget()
         security_layout = QVBoxLayout(security_widget)
@@ -1733,7 +3790,7 @@ class VitreosArchitect(QMainWindow):
                 border-color: #4ade80;
             }
         """)
-        self.security_toggle.clicked.connect(self.toggle_security_monitoring)
+        self.security_toggle.clicked.connect(self.toggle_security_monitoring)  # type: ignore
         
         self.clear_events_btn = QPushButton("🧹 Clear Events")
         self.clear_events_btn.setStyleSheet("""
@@ -1751,7 +3808,7 @@ class VitreosArchitect(QMainWindow):
                 border-color: #ff4444;
             }
         """)
-        self.clear_events_btn.clicked.connect(self.clear_security_events)
+        self.clear_events_btn.clicked.connect(self.clear_security_events)  # type: ignore
         
         controls_layout.addWidget(self.security_toggle)
         controls_layout.addWidget(self.clear_events_btn)
@@ -1782,10 +3839,10 @@ class VitreosArchitect(QMainWindow):
         events_layout = QVBoxLayout(events_group)
         self.events_table = QTableWidget()
         self.events_table.setColumnCount(4)
-        self.events_table.setHorizontalHeaderLabels(["Time", "Type", "Description", "Severity"])
+        self.events_table.setHorizontalHeaderLabels(["Time", "Type", "Description", "Severity"])  # type: ignore[arg-type]
         header = self.events_table.horizontalHeader()
         if header is not None:
-            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)  # type: ignore[arg-type]
         self.events_table.setStyleSheet("""
             QTableWidget {
                 background-color: rgba(255, 255, 255, 0.05);
@@ -1807,7 +3864,7 @@ class VitreosArchitect(QMainWindow):
         security_layout.addWidget(events_group)
         self.tab_widget.addTab(security_widget, "Security")
         
-    def create_logbook_tab(self):
+    def create_logbook_tab(self) -> None:
         """Create the Logbook tab with historical data"""
         logbook_widget = QWidget()
         logbook_layout = QVBoxLayout(logbook_widget)
@@ -1839,12 +3896,33 @@ class VitreosArchitect(QMainWindow):
             }
         """)
         logbook_layout.addWidget(self.logbook_list_widget)
+        
+        # Generate Report Button
+        self.generate_report_btn = QPushButton("📊 GENERATE_REPORT")
+        self.generate_report_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(0, 242, 255, 0.2);
+                border: 1px solid #00f2ff;
+                border-radius: 0px;
+                color: #00f2ff;
+                font-family: 'Courier New';
+                font-size: 11pt;
+                font-weight: bold;
+                padding: 10px;
+            }
+            QPushButton:hover {
+                background-color: rgba(0, 242, 255, 0.3);
+            }
+        """)
+        self.generate_report_btn.clicked.connect(self.generate_stability_report)  # type: ignore
+        logbook_layout.addWidget(self.generate_report_btn)
+        
         logbook_layout.addStretch()
         
         self.tab_widget.addTab(logbook_widget, "Logbook")
         
         
-    def create_console_tab(self):
+    def create_console_tab(self) -> None:
         """Create the Console tab with active control and live logging"""
         console_widget = QWidget()
         console_layout = QVBoxLayout(console_widget)
@@ -1915,19 +3993,19 @@ class VitreosArchitect(QMainWindow):
         # Control buttons
         self.kill_zombie_btn = QPushButton("💀 Kill Zombie Processes")
         self.kill_zombie_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #ff4444; }")
-        self.kill_zombie_btn.clicked.connect(self.kill_zombie_processes)
+        self.kill_zombie_btn.clicked.connect(self.kill_zombie_processes)  # type: ignore
         
         self.webhook_test_btn = QPushButton("🧪 Test Webhook")
         self.webhook_test_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #00f2ff; }")
-        self.webhook_test_btn.clicked.connect(self.test_webhook)
+        self.webhook_test_btn.clicked.connect(self.test_webhook)  # type: ignore
         
         self.screenshot_btn = QPushButton("📸 Take Screenshot")
         self.screenshot_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #4ade80; }")
-        self.screenshot_btn.clicked.connect(self.take_screenshot)
+        self.screenshot_btn.clicked.connect(self.take_screenshot)  # type: ignore
         
         self.reset_config_btn = QPushButton("🔄 Reset Configuration")
         self.reset_config_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #ff4444; }")
-        self.reset_config_btn.clicked.connect(self.reset_configuration)
+        self.reset_config_btn.clicked.connect(self.reset_configuration)  # type: ignore
         
         grid_layout.addWidget(self.kill_zombie_btn, 0, 0)
         grid_layout.addWidget(self.webhook_test_btn, 0, 1)
@@ -1959,7 +4037,7 @@ class VitreosArchitect(QMainWindow):
         
         self.tab_widget.addTab(console_widget, "Console")
     
-    def create_remote_tab(self):
+    def create_remote_tab(self) -> None:
         """Create the Remote tab for Discord Webhook and alert configuration"""
         remote_widget = QWidget()
         remote_layout = QVBoxLayout(remote_widget)
@@ -2003,8 +4081,9 @@ class VitreosArchitect(QMainWindow):
         webhook_label.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: 600;")
         webhook_layout.addWidget(webhook_label)
         
-        # Webhook URL input
+        # Webhook URL input (also assign to self.webhook_input for compatibility)
         self.remote_webhook_url_input = QLineEdit()
+        self.webhook_input = self.remote_webhook_url_input  # Alias for setup_monitoring
         self.remote_webhook_url_input.setPlaceholderText("https://discord.com/api/webhooks/...")
         self.remote_webhook_url_input.setStyleSheet("""
             QLineEdit {
@@ -2083,7 +4162,7 @@ class VitreosArchitect(QMainWindow):
         
         self.tab_widget.addTab(remote_widget, "Remote")
         
-    def create_settings_tab(self):
+    def create_settings_tab(self) -> None:
         """Create the Settings tab with configuration options"""
         settings_widget = QWidget()
         settings_layout = QVBoxLayout(settings_widget)
@@ -2152,62 +4231,104 @@ class VitreosArchitect(QMainWindow):
         
         # Load startup state from registry
         self.startup_checkbox.setChecked(self.is_startup_enabled())
-        self.startup_checkbox.stateChanged.connect(self.on_startup_checkbox_changed)
+        self.startup_checkbox.stateChanged.connect(self.on_startup_checkbox_changed)  # type: ignore
         
         settings_group_layout.addWidget(self.startup_checkbox)
+        
+        # Heartbeat Regulator
+        from PyQt6.QtWidgets import QSlider
+        
+        heartbeat_group = QGroupBox("Heartbeat Regulator")
+        heartbeat_group.setStyleSheet("""
+            QGroupBox {
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 0px;
+                padding: 15px;
+            }
+            QGroupBox::title {
+                color: #ffffff;
+                font-size: 12px;
+                font-weight: 600;
+            }
+        """)
+        
+        heartbeat_layout = QVBoxLayout(heartbeat_group)
+        
+        self.polling_slider = QSlider(Qt.Orientation.Horizontal)
+        self.polling_slider.setRange(1, 50)
+        self.polling_slider.setValue(20)
+        self.polling_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                background: #08080a;
+                height: 8px;
+                border: 1px solid #bc13fe;
+                border-radius: 0px;
+            }
+            QSlider::handle:horizontal {
+                background: #bc13fe;
+                width: 20px;
+                height: 20px;
+                margin: -6px 0;
+                border-radius: 0px;
+            }
+        """)
+        
+        self.polling_label = QLabel("[SAMP_FREQ: 2000ms]")
+        self.polling_label.setStyleSheet("color: #bc13fe; font-family: 'Courier New'; font-size: 10pt; font-weight: bold;")
+        
+        self.polling_slider.valueChanged.connect(self.on_polling_slider_changed)  # type: ignore
+        
+        heartbeat_layout.addWidget(self.polling_label)
+        heartbeat_layout.addWidget(self.polling_slider)
+        settings_group_layout.addWidget(heartbeat_group)
+        
         settings_layout.addWidget(settings_group)
         settings_layout.addStretch()
         
         self.tab_widget.addTab(settings_widget, "Settings")
     
-    def is_startup_enabled(self):
-        """Check if app is registered for Windows startup"""
+    def is_startup_enabled(self) -> bool:
+        """Check if the scheduled task exists"""
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
-                               r'Software\Microsoft\Windows\CurrentVersion\Run')
-            try:
-                value, _ = winreg.QueryValueEx(key, "Vitreos")
-                return True
-            except WindowsError:
-                return False
-            finally:
-                winreg.CloseKey(key)
-        except Exception as e:
-            logger.error(f"Error reading startup registry: {e}")
+            import subprocess
+            # Check if the scheduled task exists
+            result = subprocess.run(['schtasks', '/query', '/tn', 'VitreosSentinel'], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            return result.returncode == 0
+        except:
             return False
     
-    def on_startup_checkbox_changed(self, state):
-        """Handle startup checkbox state change"""
+    def on_startup_checkbox_changed(self, state: int) -> None:
+        """Handle startup checkbox state change using Scheduled Tasks"""
+        import subprocess
+        app_path = os.path.abspath(sys.argv[0])
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                               r'Software\Microsoft\Windows\CurrentVersion\Run',
-                               0, winreg.KEY_WRITE)
-            try:
-                if state:  # Checked
-                    # Get the path to the current executable
-                    app_path = sys.argv[0]
-                    if not os.path.isabs(app_path):
-                        app_path = os.path.abspath(app_path)
-                    winreg.SetValueEx(key, "Vitreos", 0, winreg.REG_SZ, 
-                                    f'"{app_path}"')
-                    logger.info("Added Vitreos to Windows startup")
-                else:  # Unchecked
-                    winreg.DeleteValue(key, "Vitreos")
-                    logger.info("Removed Vitreos from Windows startup")
-            finally:
-                winreg.CloseKey(key)
+            if state:
+                # Create a Scheduled Task to run on logon with Highest Privileges
+                cmd = ['schtasks', '/create', '/tn', 'VitreosSentinel', '/tr', f'"{app_path}"', '/sc', 'onlogon', '/rl', 'highest', '/f']
+                subprocess.run(cmd, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                self.update_console("[SYS] Added Vitreos to Scheduled Tasks (Silent Admin Autorun).")
+            else:
+                cmd = ['schtasks', '/delete', '/tn', 'VitreosSentinel', '/f']
+                subprocess.run(cmd, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                self.update_console("[SYS] Removed Vitreos from Scheduled Tasks.")
         except Exception as e:
-            logger.error(f"Error modifying startup registry: {e}")
-            self.show_status_message(f"Error updating startup settings: {str(e)}", "#ff4444")
+            self.update_console(f"[WARN] Failed to modify Scheduled Tasks: {e}")
         
-    def setup_monitoring(self):
+    def setup_monitoring(self) -> None:
         """Setup advanced system monitoring with worker thread"""
-        # Load configuration
-        self.webhook_input.setText(self.config.get('webhook_url', ''))
+        # Load configuration - handle type conversion
+        webhook_value = self.config.get('webhook_url', '')
+        if hasattr(self, 'webhook_input') and self.webhook_input is not None:  # type: ignore[reportUnnecessaryComparison]
+            if isinstance(webhook_value, bool):
+                self.webhook_input.setText('')
+            else:
+                self.webhook_input.setText(str(webhook_value))
         
         # Connect logging handler to console output
-        if ui_log_handler.log_signal is not None:
-            ui_log_handler.log_signal.connect(self.update_console)
+        log_signal: Any = ui_log_handler.log_signal
+        if log_signal is not None:
+            log_signal.connect(self.update_console)  # type: ignore[arg-type]
         
         # Create and start hardware monitoring worker thread
         self.monitor_worker = HardwareMonitorWorker()
@@ -2217,22 +4338,23 @@ class VitreosArchitect(QMainWindow):
         self.monitor_worker.moveToThread(self.monitor_thread)
         
         # Connect signals
-        self.monitor_worker.stats_updated.connect(self.on_stats_updated)
-        self.monitor_worker.processes_updated.connect(self.on_processes_updated)
-        self.monitor_worker.gpu_advanced_updated.connect(self.on_gpu_advanced_updated)
-        self.monitor_worker.storage_updated.connect(self.on_storage_updated)
-        self.monitor_thread.started.connect(self.monitor_worker.setup_gpu)
-        self.monitor_thread.started.connect(self.monitor_worker.run)
+        self.monitor_worker.stats_updated.connect(self.on_stats_updated)  # type: ignore
+        self.monitor_worker.processes_updated.connect(self.on_processes_updated)  # type: ignore
+        self.monitor_worker.gpu_advanced_updated.connect(self.on_gpu_advanced_updated)  # type: ignore
+        self.monitor_worker.storage_updated.connect(self.on_storage_updated)  # type: ignore
+        self.monitor_worker.network_updated.connect(self.on_network_updated)  # type: ignore
+        self.monitor_thread.started.connect(self.monitor_worker.setup_gpu)  # type: ignore
+        self.monitor_thread.started.connect(self.monitor_worker.run)  # type: ignore
         
         # Start the thread
         self.monitor_thread.start()
         
         self.is_running = True
         
-    def on_stats_updated(self, stats_dict):
-        """Receive hardware stats from worker thread and update UI"""
+    def on_stats_updated(self, stats_dict: Dict[str, float]) -> None:
+        """Receive hardware stats from worker thread and update UI modules"""
         try:
-            # Update stats object - use .get() for safety
+            # Update stats object
             self.stats.cpu_usage = float(stats_dict.get('cpu_usage', 0.0))
             self.stats.ram_usage = float(stats_dict.get('ram_usage', 0.0))
             self.stats.disk_usage = float(stats_dict.get('disk_usage', 0.0))
@@ -2246,43 +4368,63 @@ class VitreosArchitect(QMainWindow):
             self.stats.gpu_fan_speed = float(stats_dict.get('gpu_fan_speed', 0.0))
             self.stats.gpu_power_draw = float(stats_dict.get('gpu_power_draw', 0.0))
             
-            # Database write every 60 seconds (calls come every 2 seconds = 30 * 2 = 60 seconds)
+            # Route stats to specific modules
+            cpu_loads = [self.stats.cpu_usage] * 16
+            # Get CPU frequency if available
+            try:
+                cpu_freq = psutil.cpu_freq()
+                cpu_clock = cpu_freq.current if cpu_freq else 0.0
+            except:
+                cpu_clock = 0.0
+            self.cpu_content.update_stats(self.stats.cpu_usage, self.stats.cpu_temp, cpu_loads, cpu_clock)
+            self.gpu_content.update_stats(self.stats.gpu_usage, self.stats.gpu_temp, self.stats.gpu_vram_percent)
+            self.mem_content.update_stats(self.stats.ram_usage)
+            self.disk_content.update_stats(self.stats.disk_usage)
+            self.net_content.update_stats(self.stats.network_speed)
+            self.thermal_content.update_stats(self.stats.cpu_temp, self.stats.gpu_temp, self.stats.thermal_prediction, self.stats.gpu_fan_speed, self.stats.gpu_fan_speed)
+            
+            # Database write every 60 seconds
             self.db_write_counter += 1
             if self.db_write_counter >= 30:
-                self.database.insert_hardware_log(
-                    cpu_temp=self.stats.cpu_temp,
-                    gpu_temp=self.stats.gpu_temp,
-                    power_draw=self.stats.gpu_power_draw
-                )
+                self.database.log_stats(stats_dict=stats_dict)
                 self.db_write_counter = 0
+                logger.debug("[SYS] Database write completed")
             
-            # Update UI
-            self.update_ui()
-            
-            # Predictive thermal analysis
             self.predictive_alert.add_reading(self.stats.cpu_temp, self.stats.cpu_usage)
+            self.alert_manager.check_and_alert("CPU Temperature", self.stats.cpu_temp, 80.0)
+            self.alert_manager.check_and_alert("GPU Usage", self.stats.gpu_usage, 90.0)
+            self.alert_manager.check_and_alert("Disk Usage", self.stats.disk_usage, 95.0)
+            
+            # Update status bar
+            self.status_bar.showMessage(f"Last Update: {datetime.now().strftime('%H:%M:%S')} | CPU: {self.stats.cpu_usage:.1f}% | GPU: {self.stats.gpu_usage:.1f}%")
             
         except Exception as e:
             logger.error(f"Error updating stats from worker: {e}")
     
-    def update_console(self, message: str):
+    def update_console(self, message: str) -> None:
         """Update console output with log messages (connected from UILoggingHandler)"""
         try:
-            if not hasattr(self, 'console_output') or self.console_output is None:
+            if not hasattr(self, 'console_output'):
                 return
             
-            # Append message to console
-            self.console_output.appendPlainText(message)
+            console = cast(Any, self.console_output)
+            if console is None:
+                return
+            
+            console.appendPlainText(message)
+            
+            if hasattr(self, 'pulse_log_widget') and self.pulse_log_widget is not None:  # type: ignore[reportUnnecessaryComparison]
+                self.pulse_log_widget.add_log(message[:50])
             
             # Auto-scroll to bottom
-            scrollbar = self.console_output.verticalScrollBar()
-            if scrollbar:
+            scrollbar: Optional[Any] = console.verticalScrollBar()
+            if scrollbar is not None:
                 scrollbar.setValue(scrollbar.maximum())
             
             # Keep only last 200 lines to prevent memory bloat
-            doc = self.console_output.document()
-            if doc and doc.blockCount() > 200:
-                cursor = self.console_output.textCursor()
+            doc: Optional[Any] = console.document()
+            if doc is not None and doc.blockCount() > 200:
+                cursor = console.textCursor()
                 cursor.movePosition(cursor.MoveOperation.Start)
                 # Delete first 50 lines
                 for _ in range(50):
@@ -2291,114 +4433,182 @@ class VitreosArchitect(QMainWindow):
         except Exception as e:
             logger.error(f"Error updating console: {e}")
     
-    def on_processes_updated(self, processes_list: List[Tuple[int, str, float]]):
+    def on_processes_updated(self, processes_list: List[Tuple[int, str, float, float]]) -> None:
         """Handle process data updates from worker thread"""
         try:
-            self.processes_table.setRowCount(0)
-            for idx, (pid, name, mem_percent) in enumerate(processes_list):
-                self.processes_table.insertRow(idx)
-                self.processes_table.setItem(idx, 0, QTableWidgetItem(str(pid)))
-                self.processes_table.setItem(idx, 1, QTableWidgetItem(name))
-                mem_item = QTableWidgetItem(f"{mem_percent:.2f}%")
-                mem_item.setForeground(QColor("#00f2ff"))
-                self.processes_table.setItem(idx, 2, mem_item)
+            if not hasattr(self, 'processes_table'):
+                return
+            
+            # Disable sorting during update
+            self.processes_table.setSortingEnabled(False)
+            
+            # Clear and repopulate table
+            self.processes_table.setRowCount(len(processes_list))
+            
+            for row, (pid, name, mem_mb, cpu_pct) in enumerate(processes_list):
+                # PID column
+                pid_item = QTableWidgetItem(str(pid))
+                pid_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+                self.processes_table.setItem(row, 0, pid_item)
+                
+                # Target name column
+                name_item: QTableWidgetItem = QTableWidgetItem(name)
+                name_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                self.processes_table.setItem(row, 1, name_item)
+                
+                # RAM (MB) column
+                ram_item = QTableWidgetItem(f"{mem_mb:.1f}")
+                ram_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                ram_item.setData(Qt.ItemDataRole.UserRole, mem_mb)
+                self.processes_table.setItem(row, 2, ram_item)
+                
+                # CPU % column
+                cpu_item = QTableWidgetItem(f"{cpu_pct:.1f}")
+                cpu_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                cpu_item.setData(Qt.ItemDataRole.UserRole, cpu_pct)
+                self.processes_table.setItem(row, 3, cpu_item)
+            
+            # Re-enable sorting
+            self.processes_table.setSortingEnabled(True)
+            
         except Exception as e:
             logger.error(f"Error updating processes table: {e}")
     
-    def on_gpu_advanced_updated(self, gpu_data: Dict[str, float]):
+    def on_gpu_advanced_updated(self, gpu_data: Dict[str, Any]) -> None:
         """Handle advanced GPU data updates from worker thread"""
         try:
-            gpu_clock = gpu_data.get('gpu_clock_mhz', 0.0)
-            gpu_power = gpu_data.get('gpu_power_watts', 0.0)
-            gpu_fan = gpu_data.get('gpu_fan_percent', 0.0)
+            gpu_clock: float = float(gpu_data.get('gpu_clock_mhz', 0.0))
             
-            # Update cards with defensive .get()
-            if hasattr(self, 'gpu_clock_card'):
-                status = "Idle" if gpu_clock < 1000 else "Active"
-                self.gpu_clock_card.update_value(int(gpu_clock), "MHz", status, "#00f2ff")
-            
-            if hasattr(self, 'gpu_power_card'):
-                status = "Low" if gpu_power < 100 else "High"
-                self.gpu_power_card.update_value(gpu_power, "W", status, "#ff9800")
-            
-            if hasattr(self, 'gpu_fan_card'):
-                status = "Quiet" if gpu_fan < 50 else "Active"
-                self.gpu_fan_card.update_value(int(gpu_fan), "%", status, "#4ade80")
-            
-            # Also update the GPU Pro tab's temperature and memory cards
-            if hasattr(self, 'gpu_temp_pro_card'):
-                self.gpu_temp_pro_card.update_value(int(self.stats.gpu_temp), "°C", 
-                                                   "Cool" if self.stats.gpu_temp < 70 else "Warm", "#00d2ff")
-            
-            if hasattr(self, 'gpu_memory_pro_card'):
-                self.gpu_memory_pro_card.update_value(self.stats.gpu_vram_percent, "%", 
-                                                     "Normal", "#6366f1")
+            # Update GPU module clock display
+            if hasattr(self, 'gpu_content'):
+                self.gpu_content.clock_label.setText(f"CLOCK: {int(gpu_clock)} MHz")
             
         except Exception as e:
             logger.error(f"Error updating GPU advanced data: {e}")
     
-    def on_storage_updated(self, storage_data: Dict[str, Any]):
+    def on_storage_updated(self, storage_data: Dict[str, Any]) -> None:
         """Handle storage data updates from worker thread"""
+        # Storage data handling simplified for disk module
+        pass
+    
+    def on_network_updated(self, network_data: Dict[str, Any]) -> None:
+        """Handle network data updates from worker thread with hogs table auto-sort."""
         try:
-            # Update drives table
-            drives = storage_data.get('drives', {})
-            self.drives_table.setRowCount(0)
+            # Update adapter combo box if needed
+            if hasattr(self, 'network_adapter_combo'):
+                current_adapters = [self.network_adapter_combo.itemText(i) 
+                                  for i in range(self.network_adapter_combo.count())]
+                all_adapters = list(network_data.get('all_adapters', {}).keys())
+                
+                # Populate combo box with available adapters
+                if all_adapters and current_adapters == ["Detecting adapters..."]:
+                    self.network_adapter_combo.clear()
+                    for adapter in all_adapters:
+                        self.network_adapter_combo.addItem(adapter)
+                    # Set to selected adapter
+                    selected = network_data.get('adapter', '')
+                    if selected:
+                        index = self.network_adapter_combo.findText(selected)
+                        if index >= 0:
+                            self.network_adapter_combo.setCurrentIndex(index)
             
-            for idx, (device, drive_info) in enumerate(drives.items()):
-                self.drives_table.insertRow(idx)
-                
-                device_item = QTableWidgetItem(device)
-                total_item = QTableWidgetItem(str(drive_info.get('total_gb', 0)))
-                used_item = QTableWidgetItem(str(drive_info.get('used_gb', 0)))
-                free_item = QTableWidgetItem(str(drive_info.get('free_gb', 0)))
-                percent_item = QTableWidgetItem(f"{drive_info.get('percent', 0):.1f}%")
-                
-                # Color code based on usage
-                usage_percent = drive_info.get('percent', 0)
-                if usage_percent >= 90:
-                    percent_item.setForeground(QColor("#ff4444"))
-                elif usage_percent >= 75:
-                    percent_item.setForeground(QColor("#ffd700"))
+            # Calculate combined speed (RX + TX) in Mbps
+            rx_mbs = network_data.get('rx_mbs', 0.0)
+            tx_mbs = network_data.get('tx_mbs', 0.0)
+            total_speed_mbps = (rx_mbs + tx_mbs) * 8  # Convert MB/s to Mbps
+            
+            # Update network waveform with current speed
+            if hasattr(self, 'network_waveform'):
+                self.network_waveform.add_point(total_speed_mbps)
+            
+            # Update vitals tab network module
+            if hasattr(self, 'net_content'):
+                self.net_content.update_stats(total_speed_mbps)
+            
+            # Update Ping/Jitter cards with status logic
+            ping = network_data.get('ping', 0.0)
+            jitter = network_data.get('jitter', 0.0)
+            
+            if hasattr(self, 'ping_card'):
+                if ping > 150:
+                    self.ping_card.update_value(ping, "ms", "LATTICE_CRITICAL", "#ff8c00")
+                elif ping > 50:
+                    self.ping_card.update_value(ping, "ms", "High", "#ffd700")
                 else:
-                    percent_item.setForeground(QColor("#4ade80"))
+                    self.ping_card.update_value(ping, "ms", "STABLE", "#4ade80")
+            
+            if hasattr(self, 'jitter_card'):
+                if jitter > 20:
+                    self.jitter_card.update_value(jitter, "ms", "High", "#ff8c00")
+                elif jitter > 10:
+                    self.jitter_card.update_value(jitter, "ms", "Moderate", "#ffd700")
+                else:
+                    self.jitter_card.update_value(jitter, "ms", "STABLE", "#4ade80")
+            
+            # Update network tab cards
+            if hasattr(self, 'download_card'):
+                downloaded_mb = network_data.get('downloaded', 0.0)
+                if downloaded_mb > 1024:
+                    self.download_card.update_value(downloaded_mb / 1024, "GB", "Normal", "#00d2ff")
+                else:
+                    self.download_card.update_value(downloaded_mb, "MB", "Normal", "#00d2ff")
+            
+            if hasattr(self, 'uploaded_card'):
+                uploaded_mb = network_data.get('uploaded', 0.0)
+                if uploaded_mb > 1024:
+                    self.uploaded_card.update_value(uploaded_mb / 1024, "GB", "Normal", "#ff6b6b")
+                else:
+                    self.uploaded_card.update_value(uploaded_mb, "MB", "Normal", "#ff6b6b")
+            
+            # Update Bandwidth Hogs Table with Auto-Sort and Alpha Hog highlighting
+            if hasattr(self, 'hogs_table'):
+                hogs_data = network_data.get('network_hogs', [])
                 
-                self.drives_table.setItem(idx, 0, device_item)
-                self.drives_table.setItem(idx, 1, total_item)
-                self.drives_table.setItem(idx, 2, used_item)
-                self.drives_table.setItem(idx, 3, free_item)
-                self.drives_table.setItem(idx, 4, percent_item)
+                # Disable sorting during update to prevent flicker
+                self.hogs_table.setSortingEnabled(False)
+                
+                # Clear and repopulate table
+                self.hogs_table.setRowCount(len(hogs_data))
+                
+                for row, (process_name, conn_count) in enumerate(hogs_data):
+                    # Process name column
+                    process_item = QTableWidgetItem(process_name)
+                    process_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                    self.hogs_table.setItem(row, 0, process_item)
+                    
+                    # Connection count column
+                    count_item = QTableWidgetItem(str(conn_count))
+                    count_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    count_item.setData(Qt.ItemDataRole.UserRole, conn_count)  # Store numeric value for sorting
+                    self.hogs_table.setItem(row, 1, count_item)
+                
+                # Only sort programmatically on the first load, then let the user click headers
+                if self.hogs_table.rowCount() > 0 and not self.hogs_table.isSortingEnabled():
+                    self.hogs_table.setSortingEnabled(True)
+                    self.hogs_table.sortByColumn(1, Qt.SortOrder.DescendingOrder)
+                else:
+                    self.hogs_table.setSortingEnabled(True)
+                
+                # Highlight the Alpha Hog (top row after sorting) in Safety Orange
+                if self.hogs_table.rowCount() > 0:
+                    for col in range(self.hogs_table.columnCount()):
+                        item = self.hogs_table.item(0, col)
+                        if item:
+                            item.setBackground(QColor("#ff8c00"))  # Safety Orange
+                            item.setForeground(QColor("#000000"))  # Black text
             
-            # Update I/O statistics
-            io_counters = storage_data.get('io_counters', {})
-            read_bytes = io_counters.get('read_bytes', 0) / (1024**3)  # Convert to GB
-            write_bytes = io_counters.get('write_bytes', 0) / (1024**3)  # Convert to GB
-            read_count = io_counters.get('read_count', 0)
-            write_count = io_counters.get('write_count', 0)
-            
-            if hasattr(self, 'read_bytes_card'):
-                self.read_bytes_card.update_value(read_bytes, "GB", "Normal", "#4ade80")
-            if hasattr(self, 'write_bytes_card'):
-                self.write_bytes_card.update_value(write_bytes, "GB", "Normal", "#ff6b6b")
-            if hasattr(self, 'read_count_card'):
-                self.read_count_card.update_value(int(read_count), "", "Normal", "#00d2ff")
-            if hasattr(self, 'write_count_card'):
-                self.write_count_card.update_value(int(write_count), "", "Normal", "#ff9800")
-        
         except Exception as e:
-            logger.error(f"Error updating storage data: {e}")
+            logger.error(f"Error updating network UI: {e}")
             
-    def get_advanced_temperatures(self):
+    def get_advanced_temperatures(self) -> None:
         """Get advanced temperature data"""
         try:
             if hasattr(psutil, "sensors_temperatures"):
                 temps_fn = getattr(psutil, "sensors_temperatures", None)
-                if temps_fn is not None:
-                    temps = temps_fn()
-                else:
-                    temps = None
-                if temps and 'coretemp' in temps:
+                temps: Any = temps_fn() if temps_fn is not None else None
+                if temps is not None and 'coretemp' in temps:
                     self.stats.cpu_temp = temps['coretemp'][0].current
-                elif temps and 'cpu_thermal' in temps:
+                elif temps is not None and 'cpu_thermal' in temps:
                     self.stats.cpu_temp = temps['cpu_thermal'][0].current
                 else:
                     self.stats.cpu_temp = 45.0
@@ -2408,7 +4618,7 @@ class VitreosArchitect(QMainWindow):
             logger.error(f"Temperature reading error: {e}")
             self.stats.cpu_temp = 45.0
             
-    def analyze_network(self):
+    def analyze_network(self) -> None:
         """Analyze network performance"""
         try:
             # Ping and jitter
@@ -2444,58 +4654,76 @@ class VitreosArchitect(QMainWindow):
         except Exception as e:
             print(f"Network analysis error: {e}")
             
-    def update_bandwidth_hogs_table(self, hogs: dict):
+    def update_bandwidth_hogs_table(self, hogs: Dict[str, int]) -> None:
         """Update the bandwidth hogs table"""
         self.hogs_table.setRowCount(len(hogs))
         for i, (process, count) in enumerate(hogs.items()):
             self.hogs_table.setItem(i, 0, QTableWidgetItem(process))
             self.hogs_table.setItem(i, 1, QTableWidgetItem(str(count)))
             
-    def estimate_power_draw(self):
+    def estimate_power_draw(self) -> None:
         """Estimate system power consumption"""
         try:
             # Simple power estimation based on CPU/GPU usage
-            cpu_power = self.stats.cpu_usage * 0.1  # Rough estimation
-            gpu_power = self.stats.gpu_usage * 0.2  # Rough estimation
-            base_power = 50  # Base system power
+            cpu_power: float = self.stats.cpu_usage * 0.1  # Rough estimation
+            gpu_power: float = self.stats.gpu_usage * 0.2  # Rough estimation
+            base_power: float = 50.0  # Base system power
             
             self.stats.power_draw = base_power + cpu_power + gpu_power
             
-        except:
+        except Exception:
             self.stats.power_draw = 100.0
             
-    def update_ui(self):
+    def update_ui(self) -> None:
         """Update the UI with current statistics"""
-        # Update CPU card
-        cpu_status, cpu_color = self.get_status_and_color(self.stats.cpu_temp, 60, 80)
-        self.cpu_temp_card.update_value(self.stats.cpu_temp, "°C", cpu_status, cpu_color)
+        # Update CPU Thread Matrix
+        if hasattr(self, 'cpu_thread_matrix'):
+            cpu_loads = [self.stats.cpu_usage] * 16
+            self.cpu_thread_matrix.update_threads(cpu_loads, self.stats.cpu_temp)
+        
+        # Update GPU Circular HUD
+        if hasattr(self, 'gpu_circular_hud'):
+            self.gpu_circular_hud.update_usage(self.stats.gpu_usage)
+        
+        # Update Network Waveform
+        if hasattr(self, 'network_waveform'):
+            self.network_waveform.add_point(self.stats.cpu_usage)
         
         # Update GPU cards
-        gpu_status, gpu_color = self.get_status_and_color(self.stats.gpu_temp, 65, 85)
+        gpu_status: str
+        gpu_color: str
+        gpu_status, gpu_color = self.get_status_and_color(self.stats.gpu_temp, 65.0, 85.0)
         self.gpu_temp_card.update_value(self.stats.gpu_temp, "°C", gpu_status, gpu_color)
-        self.gpu_usage_card.update_value(self.stats.gpu_usage, "%", gpu_status, gpu_color)
         self.gpu_vram_card.update_value(self.stats.gpu_vram_percent, "%", gpu_status, gpu_color)
         self.gpu_fan_card.update_value(self.stats.gpu_fan_speed, "%", "Normal", "#ffd700")
         
         # Update CPU usage card
-        usage_status, usage_color = self.get_status_and_color(self.stats.cpu_usage, 70, 90)
+        usage_status: str
+        usage_color: str
+        usage_status, usage_color = self.get_status_and_color(self.stats.cpu_usage, 70.0, 90.0)
         self.cpu_usage_card.update_value(self.stats.cpu_usage, "%", usage_status, usage_color)
         
         # Update RAM card
-        ram_status, ram_color = self.get_status_and_color(self.stats.ram_usage, 80, 95)
+        ram_status: str
+        ram_color: str
+        ram_status, ram_color = self.get_status_and_color(self.stats.ram_usage, 80.0, 95.0)
         self.ram_card.update_value(self.stats.ram_usage, "%", ram_status, ram_color)
         
         # Update Disk card
-        disk_status, disk_color = self.get_status_and_color(self.stats.disk_usage, 80, 95)
+        disk_status: str
+        disk_color: str
+        disk_status, disk_color = self.get_status_and_color(self.stats.disk_usage, 80.0, 95.0)
         self.disk_card.update_value(self.stats.disk_usage, "%", disk_status, disk_color)
         
         # Update Power card
-        power_status, power_color = self.get_status_and_color(self.stats.gpu_power_draw, 150, 250)
+        power_status: str
+        power_color: str
+        power_status, power_color = self.get_status_and_color(self.stats.gpu_power_draw, 150.0, 250.0)
         self.power_card.update_value(self.stats.gpu_power_draw, "W", power_status, power_color)
         
         # Update Predictive card (show predicted temperature)
-        pred_status = "STABLE"
-        pred_color = "#4ade80"
+        pred_status: str = "STABLE"
+        pred_color: str = "#4ade80"
         if self.stats.thermal_prediction >= 85:
             pred_status = "CRITICAL"
             pred_color = "#ff4444"
@@ -2511,7 +4739,7 @@ class VitreosArchitect(QMainWindow):
         # Update status bar
         self.status_bar.showMessage(f"Last Update: {datetime.now().strftime('%H:%M:%S')} | CPU: {self.stats.cpu_usage:.1f}% | GPU: {self.stats.gpu_usage:.1f}%")
         
-    def update_security_events_table(self):
+    def update_security_events_table(self) -> None:
         """Update the security events table"""
         events = self.security_monitor.get_recent_events(20)
         self.events_table.setRowCount(len(events))
@@ -2531,7 +4759,7 @@ class VitreosArchitect(QMainWindow):
                 severity_item.setForeground(QColor("#4ade80"))
             self.events_table.setItem(i, 3, severity_item)
             
-    def get_status_and_color(self, value: float, warning_threshold: float, critical_threshold: float):
+    def get_status_and_color(self, value: float, warning_threshold: float, critical_threshold: float) -> Tuple[str, str]:
         """Get status text and color based on thresholds"""
         if value >= critical_threshold:
             return "CRITICAL", "#ff4444"
@@ -2540,7 +4768,7 @@ class VitreosArchitect(QMainWindow):
         else:
             return "NORMAL", "#4ade80"
             
-    def toggle_security_monitoring(self):
+    def toggle_security_monitoring(self) -> None:
         """Toggle security monitoring"""
         if self.security_monitor.monitoring_active:
             self.security_monitor.monitoring_active = False
@@ -2579,12 +4807,164 @@ class VitreosArchitect(QMainWindow):
                 }
             """)
             
-    def clear_security_events(self):
+    def clear_security_events(self) -> None:
         """Clear security events"""
         self.security_monitor.security_events.clear()
         self.update_security_events_table()
         
-    def kill_zombie_processes(self):
+    def execute_purge_protocol(self) -> None:
+        """Execute Purge Protocol with intelligent heuristic scanning and interactive confirmation"""
+        try:
+            # 1. Scan ALL processes >10MB, filter out protected, flag known bloatware
+            targets: List[Tuple[int, str, float, bool]] = []
+            my_pid = os.getpid()
+            
+            for proc in psutil.process_iter(['pid', 'name', 'memory_info']):
+                try:
+                    name = proc.info['name']
+                    if not name:
+                        continue
+                    
+                    name_lower = name.lower()
+                    pid = proc.info['pid']
+                    mem_mb = proc.info['memory_info'].rss / (1024 * 1024)
+                    
+                    # Skip self and low-memory processes
+                    if pid == my_pid or mem_mb < 2.0:
+                        continue
+                    
+                    # Skip critical system processes and protected apps
+                    if name_lower in CRITICAL_SYSTEM_PROCESSES or name_lower in PROTECTED_APPS:
+                        continue
+                    
+                    # Flag if known bloatware
+                    is_bloat = name_lower in KNOWN_BLOATWARE
+                    targets.append((pid, name, mem_mb, is_bloat))
+                except:
+                    continue
+            
+            if not targets:
+                self.update_console("[SYS] PURGE PROTOCOL: System is clean. No targets found.")
+                return
+            
+            # 2. Sort: known bloatware first, then by memory descending
+            targets.sort(key=lambda x: (not x[3], -x[2]))
+            
+            # 3. Open Confirmation Dialog
+            dialog = PurgeConfirmationDialog(targets, self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                selected_pids = dialog.get_selected_pids()
+                killed_count = 0
+                freed_mb = 0.0
+                for pid in selected_pids:
+                    try:
+                        p: psutil.Process = psutil.Process(pid)
+                        mem = p.memory_info().rss / (1024 * 1024)
+                        p.kill()
+                        p.wait(timeout=1)
+                        freed_mb += mem
+                        killed_count += 1
+                    except:
+                        pass
+                self.update_console(f"[SYS] PURGE COMPLETE: Terminated {killed_count} tasks. Freed {freed_mb:.1f} MB.")
+                self.show_status_message(f"⚠ PURGE COMPLETE: {killed_count} tasks terminated, {freed_mb:.1f} MB freed", "#ff8c00")
+            
+        except Exception as e:
+            logger.error(f"[SYS] PURGE FAILED: {e}")
+            self.show_status_message(f"❌ PURGE FAILED: {str(e)}", "#ff4444")
+    
+    def optimize_cpu_priorities(self) -> None:
+        """Set games to High Priority and background apps to Below Normal."""
+        import psutil
+        targets: List[Tuple[int, str, str, bool]] = []
+        my_pid: int = os.getpid()
+
+        for proc in psutil.process_iter(['pid', 'name', 'memory_info']):
+            try:
+                name: str = proc.info['name'].lower()
+                pid: int = proc.info['pid']
+                mem: float = proc.info['memory_info'].rss / (1024*1024)
+                if pid == my_pid or mem < 10.0 or name in CRITICAL_SYSTEM_PROCESSES:
+                    continue
+
+                if name in PERFORMANCE_TARGETS:
+                    targets.append((pid, name, "Boost ⚡ (HIGH Priority)", True))
+                elif name in EFFICIENCY_TARGETS:
+                    targets.append((pid, name, "Throttle 🛑 (LOW Priority)", True))
+                else:
+                    targets.append((pid, name, "Throttle 🛑 (LOW Priority)", False))
+            except:
+                continue
+
+        if not targets:
+            self.update_console("[SYS] PRIORITY ENGINE: No target apps currently running.")
+            return
+
+        dialog: TuningConfirmationDialog = TuningConfirmationDialog("[ REVIEW PRIORITY OPTIMIZATIONS ]", targets, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_pids: List[int] = dialog.get_selected_pids()
+            success_count: int = 0
+            for pid in selected_pids:
+                try:
+                    p: psutil.Process = psutil.Process(pid)
+                    name = p.name().lower()
+                    if name in PERFORMANCE_TARGETS:
+                        p.nice(psutil.HIGH_PRIORITY_CLASS if hasattr(psutil, 'HIGH_PRIORITY_CLASS') else -10)
+                    else:
+                        p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if hasattr(psutil, 'BELOW_NORMAL_PRIORITY_CLASS') else 10)
+                    success_count += 1
+                except psutil.AccessDenied:
+                    self.update_console(f"[WARN] Access Denied: Could not change priority for PID {pid}")
+                except:
+                    pass
+            self.update_console(f"[SYS] PRIORITY ENGINE: Successfully optimized {success_count} processes.")
+
+    def isolate_core_affinity(self) -> None:
+        """Force background efficiency apps to the last 2 logical cores."""
+        import psutil
+        cpu_count: Optional[int] = psutil.cpu_count()
+        if cpu_count is None or cpu_count < 4:
+            self.update_console("[WARN] CORE ISOLATOR: Requires at least 4 logical cores.")
+            return
+
+        restricted_cores: List[int] = [cpu_count - 2, cpu_count - 1]
+        targets: List[Tuple[int, str, str, bool]] = []
+        my_pid: int = os.getpid()
+
+        for proc in psutil.process_iter(['pid', 'name', 'memory_info']):
+            try:
+                name: str = proc.info['name'].lower()
+                pid: int = proc.info['pid']
+                mem: float = proc.info['memory_info'].rss / (1024*1024)
+                if pid == my_pid or mem < 10.0 or name in CRITICAL_SYSTEM_PROCESSES or name in PERFORMANCE_TARGETS:
+                    continue
+
+                # Target both efficiency apps AND known bloatware for core isolation
+                is_target: bool = name in EFFICIENCY_TARGETS or name in KNOWN_BLOATWARE
+                targets.append((pid, name, f"Isolate 🔒 (Cores {restricted_cores})", is_target))
+            except:
+                continue
+
+        if not targets:
+            self.update_console("[SYS] CORE ISOLATOR: No background targets currently running.")
+            return
+
+        dialog: TuningConfirmationDialog = TuningConfirmationDialog(f"[ REVIEW CORE ISOLATION: CORES {restricted_cores} ]", targets, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_pids: List[int] = dialog.get_selected_pids()
+            success_count: int = 0
+            for pid in selected_pids:
+                try:
+                    p: psutil.Process = psutil.Process(pid)
+                    p.cpu_affinity(restricted_cores)
+                    success_count += 1
+                except psutil.AccessDenied:
+                    self.update_console(f"[WARN] Access Denied: Could not isolate PID {pid}")
+                except:
+                    pass
+            self.update_console(f"[SYS] CORE ISOLATOR: Successfully isolated {success_count} processes to cores {restricted_cores}.")
+    
+    def kill_zombie_processes(self) -> None:
         """Kill not responding processes"""
         try:
             killed_count = 0
@@ -2600,7 +4980,7 @@ class VitreosArchitect(QMainWindow):
         except Exception as e:
             self.show_status_message(f"Error killing processes: {str(e)}", "#ff4444")
             
-    def take_screenshot(self):
+    def take_screenshot(self) -> None:
         """Take a screenshot and send to Discord"""
         try:
             # This would need implementation for actual screenshot capture
@@ -2609,10 +4989,10 @@ class VitreosArchitect(QMainWindow):
         except Exception as e:
             self.show_status_message(f"Screenshot error: {str(e)}", "#ff4444")
             
-    def reset_configuration(self):
+    def reset_configuration(self) -> None:
         """Reset all configuration to defaults"""
         try:
-            self.config = {
+            self.config: ConfigDict = {
                 'webhook_url': '',
                 'temp_monitoring': True,
                 'usage_monitoring': True,
@@ -2624,7 +5004,7 @@ class VitreosArchitect(QMainWindow):
         except Exception as e:
             self.show_status_message(f"Reset error: {str(e)}", "#ff4444")
             
-    def test_webhook(self):
+    def test_webhook(self) -> None:
         """Test Discord webhook connection"""
         webhook_url = self.webhook_input.text().strip()
         
@@ -2637,7 +5017,8 @@ class VitreosArchitect(QMainWindow):
             return
             
         try:
-            test_embed = {
+            # Type-safe webhook embed structure
+            test_embed: Dict[str, Any] = {
                 "embeds": [{
                     "title": "🧪 Vitreos Architect Test",
                     "description": "Testing advanced sentinel connectivity",
@@ -2660,7 +5041,7 @@ class VitreosArchitect(QMainWindow):
         except Exception as e:
             self.show_status_message(f"❌ Connection error: {str(e)}", "#ff4444")
             
-    def show_status_message(self, message: str, color: str):
+    def show_status_message(self, message: str, color: str) -> None:
         """Show temporary status message"""
         self.status_bar.showMessage(message)
         self.status_bar.setStyleSheet(f"""
@@ -2674,9 +5055,9 @@ class VitreosArchitect(QMainWindow):
         """)
         
         # Reset after 3 seconds
-        QTimer.singleShot(3000, self.reset_status_style)
+        QTimer.singleShot(3000, self.reset_status_style)  # type: ignore[arg-type]
         
-    def reset_status_style(self):
+    def reset_status_style(self) -> None:
         """Reset status bar style"""
         self.status_bar.setStyleSheet("""
             QStatusBar {
@@ -2687,10 +5068,93 @@ class VitreosArchitect(QMainWindow):
             }
         """)
         
-    def load_config(self):
+
+    def on_polling_slider_changed(self, value: int) -> None:
+        """Handle polling slider changes"""
+        interval_ms = value * 100
+        interval_sec = value * 0.1
+        if self.monitor_worker:
+            self.monitor_worker.polling_interval = interval_sec
+        
+        # Update Label UI
+        color = "#ff8c00" if interval_ms < 300 else "#bc13fe"
+        self.polling_label.setText(f"[SAMP_FREQ: {interval_ms}ms]")
+        self.polling_label.setStyleSheet(f"color: {color}; font-family: 'Courier New'; font-size: 10pt; font-weight: bold;")
+    
+    def toggle_breach_flicker(self) -> None:
+        """Toggle security breach border flicker"""
+        self.breach_flicker_state = not self.breach_flicker_state
+        if self.breach_flicker_state:
+            self.setStyleSheet("""
+                QMainWindow {
+                    background: #08080a;
+                    border: 3px solid #ff8c00;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QMainWindow {
+                    background: #08080a;
+                }
+            """)
+    
+    def generate_stability_report(self) -> None:
+        """Generate CCE stability report to desktop"""
+        try:
+            desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+            report_path = os.path.join(desktop, 'CCE_Stability_Report.txt')
+            
+            with open(report_path, 'w') as f:
+                f.write("=" * 60 + "\n")
+                f.write("VITREOS SYSTEM SENTINEL - STABILITY REPORT\n")
+                f.write("=" * 60 + "\n\n")
+                f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                
+                f.write("SYSTEM VITALS SUMMARY\n")
+                f.write("-" * 60 + "\n")
+                f.write(f"CPU Temperature: {self.stats.cpu_temp:.1f}°C\n")
+                f.write(f"GPU Temperature: {self.stats.gpu_temp:.1f}°C\n")
+                f.write(f"CPU Usage: {self.stats.cpu_usage:.1f}%\n")
+                f.write(f"GPU Usage: {self.stats.gpu_usage:.1f}%\n")
+                f.write(f"RAM Usage: {self.stats.ram_usage:.1f}%\n")
+                f.write(f"Disk Usage: {self.stats.disk_usage:.1f}%\n\n")
+                
+                f.write("SYSTEM PULSE LOG\n")
+                f.write("-" * 60 + "\n")
+                if hasattr(self, 'pulse_log_widget'):
+                    for msg in self.pulse_log_widget.log_messages:
+                        f.write(msg + "\n")
+                
+                f.write("\n\nSECURITY EVENTS\n")
+                f.write("-" * 60 + "\n")
+                events = self.security_monitor.get_recent_events(50)
+                for event in events:
+                    f.write(f"[{event.timestamp}] {event.event_type}: {event.description}\n")
+                
+                f.write("\n\nHARDWARE ANOMALIES\n")
+                f.write("-" * 60 + "\n")
+                if self.stats.cpu_temp > 85:
+                    f.write(f"⚠ CPU Temperature Critical: {self.stats.cpu_temp:.1f}°C\n")
+                if self.stats.gpu_temp > 85:
+                    f.write(f"⚠ GPU Temperature Critical: {self.stats.gpu_temp:.1f}°C\n")
+                if self.security_breach:
+                    f.write("⚠ SECURITY BREACH DETECTED\n")
+                
+                f.write("\n" + "=" * 60 + "\n")
+                f.write("END OF REPORT\n")
+                f.write("=" * 60 + "\n")
+            
+            self.show_status_message(f"✅ Report saved to Desktop", "#4ade80")
+            logger.info(f"[SYS] Stability report generated: {report_path}")
+            
+        except Exception as e:
+            self.show_status_message(f"❌ Report error: {str(e)}", "#ff4444")
+            logger.error(f"Error generating report: {e}")
+    
+    def load_config(self) -> ConfigDict:
         """Load configuration from file"""
         config_file = 'mercury_config.json'
-        default_config = {
+        default_config: ConfigDict = {
             'webhook_url': '',
             'temp_monitoring': True,
             'usage_monitoring': True,
@@ -2700,49 +5164,56 @@ class VitreosArchitect(QMainWindow):
         try:
             if os.path.exists(config_file):
                 with open(config_file, 'r') as f:
-                    return json.load(f)
+                    loaded_config: Any = json.load(f)
+                    return cast(ConfigDict, loaded_config)
         except:
             pass
             
         return default_config
     
-    def save_config(self):
+    def save_config(self) -> None:
         """Save configuration to file"""
         try:
             # Update webhook URL from input
-            self.config['webhook_url'] = self.webhook_input.text().strip()
+            if hasattr(self, 'webhook_input') and self.webhook_input is not None:  # type: ignore[reportUnnecessaryComparison]
+                self.config['webhook_url'] = self.webhook_input.text().strip()
             
             with open('mercury_config.json', 'w') as f:
                 json.dump(self.config, f, indent=2)
         except Exception as e:
             print(f"Error saving config: {e}")
         
-    def changeEvent(self, event):
-        """Handle window state changes"""
-        from PyQt6.QtCore import QEvent
-        
-        # Check if window is being minimized
-        if self.isMinimized():
-            logger.debug("Window minimized - hiding to tray")
-            self.hide()
-            event.accept()
-            return
-        
-        super().changeEvent(event)
+    def changeEvent(self, a0: Optional[QEvent]) -> None:
+        """Handle window state changes for minimizing to tray"""
+        if a0 is not None and a0.type() == QEvent.Type.WindowStateChange and self.isMinimized():
+            # When the window is minimized, hide it and show the tray icon
+            if self.tray_icon and self.tray_icon.isVisible():
+                self.hide()
+                a0.accept()
+                return
+
+        super().changeEvent(a0)
     
-    def closeEvent(self, event):
+    def closeEvent(self, a0: Optional[QCloseEvent]) -> None:
         """Handle window close event - minimize to tray instead of exiting"""
         # Check if this is a real close or minimize to tray
         if self.tray_icon is not None and self.tray_icon.isVisible():
             # Minimize to tray instead of closing
             logger.debug("Close button clicked - hiding to tray")
             self.hide()
-            event.ignore()
+            if a0 is not None:
+                a0.ignore()
         else:
             # Exit application
             logger.info("Closing application (no tray available)")
             self.is_running = False
             self.security_monitor.monitoring_active = False
+            
+            # Remove UI logging handler to prevent RuntimeError on shutdown
+            try:
+                logging.getLogger().removeHandler(ui_log_handler)
+            except ValueError:
+                pass  # Handler already removed
             
             # Hide tray icon immediately
             if self.tray_icon is not None:
@@ -2756,52 +5227,53 @@ class VitreosArchitect(QMainWindow):
                 self.monitor_thread.wait()
             
             self.save_config()
-            event.accept()
+            if a0 is not None:
+                a0.accept()
     
-    def mousePressEvent(self, event):
+    def mousePressEvent(self, a0: Optional[QMouseEvent]) -> None:
         """Handle mouse press - check if in header area for dragging"""
-        if self.header_widget is not None:
+        if a0 is not None and self.header_widget is not None:
             # Get header height and check if click is within header area
-            header_height = self.header_widget.height()
+            header_height: int = self.header_widget.height()
             # Use local coordinates for accurate detection
-            click_y = event.position().y()
+            click_y: float = a0.position().y()
             
             if click_y <= header_height:
                 self.is_dragging = True
                 # Store the offset between click position and window position
-                self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-                event.accept()
+                self.drag_position = a0.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                a0.accept()
                 return
         
-        super().mousePressEvent(event)
+        super().mousePressEvent(a0)
     
-    def mouseMoveEvent(self, event):
+    def mouseMoveEvent(self, a0: Optional[QMouseEvent]) -> None:
         """Handle mouse move - drag window if in drag mode"""
-        if self.is_dragging:
+        if a0 is not None and self.is_dragging and self.drag_position is not None:
             # Move window so that the click point stays under the cursor
-            self.move(event.globalPosition().toPoint() - self.drag_position)
-            event.accept()
+            self.move(a0.globalPosition().toPoint() - self.drag_position)
+            a0.accept()
         else:
-            super().mouseMoveEvent(event)
+            super().mouseMoveEvent(a0)
     
-    def mouseReleaseEvent(self, event):
+    def mouseReleaseEvent(self, a0: Optional[QMouseEvent]) -> None:
         """Handle mouse release - stop dragging"""
-        if self.is_dragging:
+        if a0 is not None and self.is_dragging:
             self.is_dragging = False
-            event.accept()
+            a0.accept()
         else:
-            super().mouseReleaseEvent(event)
+            super().mouseReleaseEvent(a0)
 
-def main():
+def main() -> None:
     """Main application entry point"""
     logger.info("Starting Vitreos Architect")
-    app = QApplication(sys.argv)
+    app: QApplication = QApplication(sys.argv)
     
     # Set application style
     app.setStyle('Fusion')
     
     # Create and show main window
-    window = VitreosArchitect()
+    window: VitreosArchitect = VitreosArchitect()
     window.show()
     logger.info("Application window displayed - ready for user interaction")
     
@@ -2818,3 +5290,10 @@ if __name__ == '__main__':
     logger.info("Vitreos - High-End System Sentinel")
     logger.info("=" * 60)
     main()
+
+
+
+
+
+
+
