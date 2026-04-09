@@ -1,7 +1,7 @@
 
 import sqlite3
 import logging
-from typing import Dict, Any, TypedDict
+from typing import Dict, Any, TypedDict, List, Tuple
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot  # type: ignore[reportUnknownVariableType]
 
 logger = logging.getLogger(__name__)
@@ -14,6 +14,11 @@ class HardwareLogRow(TypedDict):
     gpu_temp: float
     gpu_usage: float
     ram_usage: float
+
+class ProcessRuleRow(TypedDict):
+    process_name: str
+    rule_type: str
+    rule_value: str
 
 class VitreosDB:
     """
@@ -82,8 +87,7 @@ class VitreosDB:
 
     def create_tables(self) -> None:
         """
-        Creates the 'hardware_log' table if it doesn't already exist. This
-        table will store the time-series data for hardware metrics.
+        Creates the 'hardware_log' and 'process_rules' tables if they don't already exist.
         """
         try:
             cursor: sqlite3.Cursor = self.connection.cursor()
@@ -95,6 +99,13 @@ class VitreosDB:
                     gpu_temp REAL,
                     gpu_usage REAL,
                     ram_usage REAL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS process_rules (
+                    process_name TEXT PRIMARY KEY,
+                    rule_type TEXT NOT NULL,
+                    rule_value TEXT NOT NULL
                 )
             """)
             self.connection.commit()
@@ -115,6 +126,61 @@ class VitreosDB:
         """
         # Placeholder for event logging - can be expanded
         logger.info(f"Event logged: {event_type} - {message} ({severity})")
+    
+    def save_process_rule(self, process_name: str, rule_type: str, rule_value: str) -> None:
+        """
+        Save or update a process tuning rule in the database.
+        
+        Args:
+            process_name: The lowercase process name (e.g., 'discord.exe')
+            rule_type: Either 'PRIORITY' or 'AFFINITY'
+            rule_value: For PRIORITY: 'HIGH' or 'BELOW_NORMAL'. For AFFINITY: comma-separated core list (e.g., '6,7')
+        """
+        try:
+            cursor: sqlite3.Cursor = self.connection.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO process_rules (process_name, rule_type, rule_value)
+                VALUES (?, ?, ?)
+            """, (process_name.lower(), rule_type, rule_value))
+            self.connection.commit()
+            logger.info(f"Saved process rule: {process_name} -> {rule_type}={rule_value}")
+        except Exception as e:
+            logger.error(f"Failed to save process rule: {e}")
+    
+    def get_all_process_rules(self) -> Dict[str, Tuple[str, str]]:
+        """
+        Retrieve all saved process rules from the database.
+        
+        Returns:
+            Dictionary mapping process_name -> (rule_type, rule_value)
+            Example: {'discord.exe': ('PRIORITY', 'BELOW_NORMAL'), 'r5apex.exe': ('PRIORITY', 'HIGH')}
+        """
+        rules: Dict[str, Tuple[str, str]] = {}
+        try:
+            cursor: sqlite3.Cursor = self.connection.cursor()
+            cursor.execute("SELECT process_name, rule_type, rule_value FROM process_rules")
+            rows: List[Tuple[str, str, str]] = cursor.fetchall()
+            for process_name, rule_type, rule_value in rows:
+                rules[process_name] = (rule_type, rule_value)
+            logger.info(f"Loaded {len(rules)} process rules from database")
+        except Exception as e:
+            logger.error(f"Failed to load process rules: {e}")
+        return rules
+    
+    def delete_process_rule(self, process_name: str) -> None:
+        """
+        Delete a process rule from the database.
+        
+        Args:
+            process_name: The lowercase process name to remove
+        """
+        try:
+            cursor: sqlite3.Cursor = self.connection.cursor()
+            cursor.execute("DELETE FROM process_rules WHERE process_name = ?", (process_name.lower(),))
+            self.connection.commit()
+            logger.info(f"Deleted process rule: {process_name}")
+        except Exception as e:
+            logger.error(f"Failed to delete process rule: {e}")
 
     def close(self) -> None:
         """

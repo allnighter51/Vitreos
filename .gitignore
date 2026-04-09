@@ -6,3 +6,12 @@ dist/
 *.spec
 mercury_config.json
 *.log
+# Ignore SQLite databases
+*.db
+
+# Ignore temporary text files
+*.txt
+
+# Ignore Python cache
+__pycache__/
+*.py[cod]

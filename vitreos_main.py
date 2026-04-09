@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
+# pyright: reportUnusedImport=false
 """
 Vitreos - High-End System Sentinel
 'Intelligence through Transparency.'
 Advanced Desktop Interface with Liquid Glass Aesthetics
 """
+import sentry_sdk
 
+sentry_sdk.init(
+    dsn="https://0b52971c70bd329a23fa7f76920ec924@o4511182257324032.ingest.us.sentry.io/4511191659839488",  # Get this from Settings > Projects > Vitreos > Client Keys
+    traces_sample_rate=1.0,
+    profiles_sample_rate=1.0,
+    # This ensures Sentry links the error to the correct commit in GitHub
+    environment="production", 
+)
 import sys
 import json
 import os
@@ -17,7 +26,7 @@ import winreg
 import subprocess
 import ctypes
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, Tuple, Deque, TYPE_CHECKING, Union, cast
 from collections import deque
@@ -107,6 +116,17 @@ except ImportError:
     if PYQT6_AVAILABLE:
         logger.warning("GPU monitoring (NVML) not available - using fallback mode")
 
+# Try to import WMI for security monitoring
+WMI_AVAILABLE: bool = False
+try:
+    import wmi  # type: ignore[reportMissingImports]
+    WMI_AVAILABLE: bool = True  # type: ignore[no-redef]
+except ImportError:
+    logger.warning("WMI module not available - USB detection will use PowerShell fallback")
+
+
+from vitreos_shield import VitreosShield
+from vitreos_tweaks import SystemTweaker
 # Type alias for configuration dictionary
 ConfigDict = Dict[str, Union[str, bool]]
 # CCE Process Watchdog Blacklist
@@ -264,11 +284,11 @@ class LiquidGlassCard(QFrame):
         self.title_label = QLabel(self.title)
         self.title_label.setStyleSheet("""
             QLabel {
-                color: #ffffff;
-                font-size: 14px;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
+                color: #ffffff
+                font-size: 14px
+                font-weight: 600
+                text-transform: uppercase
+                letter-spacing: 0.5px
             }
         """)
         
@@ -276,10 +296,10 @@ class LiquidGlassCard(QFrame):
         self.value_label = QLabel("0")
         self.value_label.setStyleSheet("""
             QLabel {
-                color: #00f2ff;
-                font-size: 32px;
-                font-weight: 700;
-                font-family: 'Segoe UI', Arial, sans-serif;
+                color: #00f2ff
+                font-size: 32px
+                font-weight: 700
+                font-family: 'Segoe UI', Arial, sans-serif
             }
         """)
         
@@ -287,9 +307,9 @@ class LiquidGlassCard(QFrame):
         self.unit_label = QLabel("")
         self.unit_label.setStyleSheet("""
             QLabel {
-                color: #888888;
-                font-size: 12px;
-                font-weight: 400;
+                color: #888888
+                font-size: 12px
+                font-weight: 400
             }
         """)
         
@@ -297,9 +317,9 @@ class LiquidGlassCard(QFrame):
         self.status_label = QLabel("Normal")
         self.status_label.setStyleSheet("""
             QLabel {
-                color: #4ade80;
-                font-size: 11px;
-                font-weight: 500;
+                color: #4ade80
+                font-size: 11px
+                font-weight: 500
             }
         """)
         
@@ -349,10 +369,10 @@ class LiquidGlassCard(QFrame):
         self.status_label.setText(status)
         self.value_label.setStyleSheet(f"""
             QLabel {{
-                color: {color};
-                font-size: 32px;
-                font-weight: 700;
-                font-family: 'Segoe UI', Arial, sans-serif;
+                color: {color}
+                font-size: 32px
+                font-weight: 700
+                font-family: 'Segoe UI', Arial, sans-serif
             }}
         """)
 
@@ -761,12 +781,12 @@ class VitreosModule(QFrame):
         self.setFrameStyle(QFrame.Shape.StyledPanel)
         self.setStyleSheet("""
             VitreosModule {
-                background-color: #121214;
-                border: 1px solid rgba(188, 19, 254, 0.5);
-                border-radius: 0px;
+                background-color: #121214
+                border: 1px solid rgba(188, 19, 254, 0.5)
+                border-radius: 0px
             }
             VitreosModule:hover {
-                border: 1px solid rgba(188, 19, 254, 1.0);
+                border: 1px solid rgba(188, 19, 254, 1.0)
             }
         """)
         
@@ -779,8 +799,8 @@ class VitreosModule(QFrame):
         header.setFixedHeight(22)
         header.setStyleSheet("""
             QFrame {
-                background-color: #1a1a1e;
-                border-bottom: 1px solid #bc13fe;
+                background-color: #1a1a1e
+                border-bottom: 1px solid #bc13fe
             }
         """)
         
@@ -792,11 +812,11 @@ class VitreosModule(QFrame):
         title_label = QLabel(f":: {self.title}")
         title_label.setStyleSheet("""
             QLabel {
-                color: #bc13fe;
-                font-family: 'Consolas', monospace;
-                font-size: 9pt;
-                font-weight: bold;
-                background: transparent;
+                color: #bc13fe
+                font-family: 'Consolas', monospace
+                font-size: 9pt
+                font-weight: bold
+                background: transparent
             }
         """)
         header_layout.addWidget(title_label)
@@ -806,12 +826,12 @@ class VitreosModule(QFrame):
         self.hazard_sticker = QLabel("")
         self.hazard_sticker.setStyleSheet("""
             QLabel {
-                background: transparent;
-                font-family: 'Consolas', monospace;
-                font-size: 7pt;
-                font-weight: bold;
-                padding: 2px 4px;
-                margin-right: 5px;
+                background: transparent
+                font-family: 'Consolas', monospace
+                font-size: 7pt
+                font-weight: bold
+                padding: 2px 4px
+                margin-right: 5px
             }
         """)
         self.hazard_sticker.hide()
@@ -850,7 +870,7 @@ class VitreosModule(QFrame):
     
     def toggle_minimize(self) -> None:
         """Toggle minimize/maximize state."""
-        if self.content_container is not None:  # type: ignore[reportUnnecessaryComparison]
+        if self.content_container:  # type: ignore[reportUnnecessaryComparison]
             self.is_minimized = not self.is_minimized
             self.content_container.setVisible(not self.is_minimized)
             logger.info(f"[SYS] Module {self.title} {'minimized' if self.is_minimized else 'restored'}")
@@ -862,25 +882,25 @@ class VitreosModule(QFrame):
     
     def show_hazard_sticker(self, text: str, bg_color: str, text_color: str = "#000000") -> None:
         """Display a hazard sticker with custom styling."""
-        if self.hazard_sticker is not None:  # type: ignore[reportUnnecessaryComparison]
+        if self.hazard_sticker:  # type: ignore[reportUnnecessaryComparison]
             self.hazard_sticker.setText(text)
             self.hazard_sticker.setStyleSheet(f"""
                 QLabel {{
-                    background: {bg_color};
-                    color: {text_color};
-                    font-family: 'Consolas', monospace;
-                    font-size: 7pt;
-                    font-weight: bold;
-                    padding: 2px 4px;
-                    margin-right: 5px;
-                    border: 1px solid {text_color};
+                    background: {bg_color}
+                    color: {text_color}
+                    font-family: 'Consolas', monospace
+                    font-size: 7pt
+                    font-weight: bold
+                    padding: 2px 4px
+                    margin-right: 5px
+                    border: 1px solid {text_color}
                 }}
             """)
             self.hazard_sticker.show()
     
     def hide_hazard_sticker(self) -> None:
         """Hide the hazard sticker."""
-        if self.hazard_sticker is not None:  # type: ignore[reportUnnecessaryComparison]
+        if self.hazard_sticker:  # type: ignore[reportUnnecessaryComparison]
             self.hazard_sticker.hide()
 
 class CPUMonitorModule(QWidget):
@@ -932,7 +952,7 @@ class CPUMonitorModule(QWidget):
             # Show OVERCLOCKED sticker if clock > 5000 MHz
             if self.parent_module is not None and cpu_clock > 5000:  # type: ignore[reportUnnecessaryComparison]
                 self.parent_module.show_hazard_sticker("[ OVERCLOCKED ]", "#ffff00", "#000000")
-            elif self.parent_module is not None:  # type: ignore[reportUnnecessaryComparison]
+            elif self.parent_module:  # type: ignore[reportUnnecessaryComparison]
                 self.parent_module.hide_hazard_sticker()
 
 class GPUMonitorModule(QWidget):
@@ -978,7 +998,7 @@ class GPUMonitorModule(QWidget):
         # Show HOT sticker if temp > 82°C
         if self.parent_module is not None and gpu_temp > 82:  # type: ignore[reportUnnecessaryComparison]
             self.parent_module.show_hazard_sticker("[ HOT ]", "#ff0000", "#000000")
-        elif self.parent_module is not None:  # type: ignore[reportUnnecessaryComparison]
+        elif self.parent_module:  # type: ignore[reportUnnecessaryComparison]
             self.parent_module.hide_hazard_sticker()
 
 class MemoryArrayModule(QWidget):
@@ -1132,7 +1152,7 @@ class ThermalControlModule(QWidget):
         # Show MAX_RPM sticker if either fan is at 100%
         if self.parent_module is not None and (self.cpu_fan_value >= 100 or self.gpu_fan_value >= 100):  # type: ignore[reportUnnecessaryComparison]
             self.parent_module.show_hazard_sticker("[ MAX_RPM ]", "#bc13fe", "#000000")
-        elif self.parent_module is not None:  # type: ignore[reportUnnecessaryComparison]
+        elif self.parent_module:  # type: ignore[reportUnnecessaryComparison]
             self.parent_module.hide_hazard_sticker()
 
 class ThermalBar(QWidget):
@@ -1389,7 +1409,7 @@ class AlertManager(QObject):
             breached_at: Optional[float] = state.get('breached_at')
             if breached_at is None:
                 state['breached_at'] = time.time()
-            elif breached_at is not None and time.time() - breached_at >= duration_sec:
+            elif time.time() - breached_at >= duration_sec:
                 self.trigger_alert(metric_name, current_value)
                 state['breached_at'] = None # Reset after alert
         else:
@@ -1544,16 +1564,18 @@ class PurgeConfirmationDialog(QDialog):
         super().__init__(parent)
         self.targets = targets
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
-        self.setModal(True)
+        self.setWindowModality(Qt.WindowModality.NonModal)
         self.resize(650, 700)
+        self.is_dragging: bool = False
+        self.drag_position: Optional[QPoint] = None
         self.setup_ui()
     
     def setup_ui(self) -> None:
         """Setup dialog UI with Cyberdeck styling"""
         self.setStyleSheet("""
             QDialog {
-                background-color: #08080a;
-                border: 2px solid #bc13fe;
+                background-color: #08080a
+                border: 2px solid #bc13fe
             }
         """)
         
@@ -1565,11 +1587,11 @@ class PurgeConfirmationDialog(QDialog):
         title = QLabel("[ REVIEW PURGE TARGETS ]")
         title.setStyleSheet("""
             QLabel {
-                color: #ff8c00;
-                font-family: 'Courier New', monospace;
-                font-size: 14pt;
-                font-weight: bold;
-                padding: 10px;
+                color: #ff8c00
+                font-family: 'Courier New', monospace
+                font-size: 14pt
+                font-weight: bold
+                padding: 10px
             }
         """)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1582,17 +1604,17 @@ class PurgeConfirmationDialog(QDialog):
         btn_select_all = QPushButton("☑ Select All")
         btn_select_all.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 1px solid #00f2ff;
-                color: #00f2ff;
-                font-family: 'Courier New', monospace;
-                font-size: 9pt;
-                font-weight: bold;
-                padding: 8px 12px;
+                background-color: transparent
+                border: 1px solid #00f2ff
+                color: #00f2ff
+                font-family: 'Courier New', monospace
+                font-size: 9pt
+                font-weight: bold
+                padding: 8px 12px
             }
             QPushButton:hover {
-                background-color: #00f2ff;
-                color: #000000;
+                background-color: #00f2ff
+                color: #000000
             }
         """)
         btn_select_all.clicked.connect(self.select_all)  # type: ignore
@@ -1600,17 +1622,17 @@ class PurgeConfirmationDialog(QDialog):
         btn_unselect_all = QPushButton("☐ Unselect All")
         btn_unselect_all.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 1px solid #666666;
-                color: #666666;
-                font-family: 'Courier New', monospace;
-                font-size: 9pt;
-                font-weight: bold;
-                padding: 8px 12px;
+                background-color: transparent
+                border: 1px solid #666666
+                color: #666666
+                font-family: 'Courier New', monospace
+                font-size: 9pt
+                font-weight: bold
+                padding: 8px 12px
             }
             QPushButton:hover {
-                background-color: #666666;
-                color: #000000;
+                background-color: #666666
+                color: #000000
             }
         """)
         btn_unselect_all.clicked.connect(self.unselect_all)  # type: ignore
@@ -1618,17 +1640,17 @@ class PurgeConfirmationDialog(QDialog):
         btn_bloatware_only = QPushButton("🎯 Bloatware Only")
         btn_bloatware_only.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 1px solid #bc13fe;
-                color: #bc13fe;
-                font-family: 'Courier New', monospace;
-                font-size: 9pt;
-                font-weight: bold;
-                padding: 8px 12px;
+                background-color: transparent
+                border: 1px solid #bc13fe
+                color: #bc13fe
+                font-family: 'Courier New', monospace
+                font-size: 9pt
+                font-weight: bold
+                padding: 8px 12px
             }
             QPushButton:hover {
-                background-color: #bc13fe;
-                color: #000000;
+                background-color: #bc13fe
+                color: #000000
             }
         """)
         btn_bloatware_only.clicked.connect(self.select_bloatware)  # type: ignore
@@ -1656,25 +1678,25 @@ class PurgeConfirmationDialog(QDialog):
         
         self.table.setStyleSheet("""
             QTableWidget {
-                background-color: transparent;
-                border: 1px solid #bc13fe;
-                color: #00f2ff;
-                font-family: 'Consolas', monospace;
-                font-size: 9pt;
-                gridline-color: rgba(188, 19, 254, 0.3);
+                background-color: transparent
+                border: 1px solid #bc13fe
+                color: #00f2ff
+                font-family: 'Consolas', monospace
+                font-size: 9pt
+                gridline-color: rgba(188, 19, 254, 0.3)
             }
             QTableWidget::item {
-                padding: 6px;
+                padding: 6px
             }
             QHeaderView::section {
-                background-color: #1a1a1e;
-                color: #bc13fe;
-                font-family: 'Courier New', monospace;
-                font-weight: bold;
-                font-size: 9pt;
-                padding: 8px;
-                border: none;
-                border-bottom: 2px solid #bc13fe;
+                background-color: #1a1a1e
+                color: #bc13fe
+                font-family: 'Courier New', monospace
+                font-weight: bold
+                font-size: 9pt
+                padding: 8px
+                border: none
+                border-bottom: 2px solid #bc13fe
             }
         """)
         
@@ -1711,6 +1733,32 @@ class PurgeConfirmationDialog(QDialog):
         
         layout.addWidget(self.table)
         
+        # Save Rules checkbox
+        self.save_checkbox = QCheckBox("💾 Save these rules persistently (Apply on Boot)")
+        self.save_checkbox.setChecked(True)
+        self.save_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #00f2ff
+                font-family: 'Courier New', monospace
+                font-size: 10pt
+                font-weight: 600
+                spacing: 8px
+                padding: 10px
+            }
+            QCheckBox::indicator {
+                width: 20px
+                height: 20px
+                border: 2px solid #00f2ff
+                border-radius: 4px
+                background-color: transparent
+            }
+            QCheckBox::indicator:checked {
+                background-color: #00f2ff
+                border-color: #00f2ff
+            }
+        """)
+        layout.addWidget(self.save_checkbox)
+        
         # Buttons
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
@@ -1719,16 +1767,16 @@ class PurgeConfirmationDialog(QDialog):
         btn_cancel.setFixedHeight(40)
         btn_cancel.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 2px solid #666666;
-                color: #666666;
-                font-family: 'Courier New', monospace;
-                font-size: 11pt;
-                font-weight: bold;
+                background-color: transparent
+                border: 2px solid #666666
+                color: #666666
+                font-family: 'Courier New', monospace
+                font-size: 11pt
+                font-weight: bold
             }
             QPushButton:hover {
-                background-color: #666666;
-                color: #000000;
+                background-color: #666666
+                color: #000000
             }
         """)
         btn_cancel.clicked.connect(self.reject)  # type: ignore
@@ -1737,16 +1785,16 @@ class PurgeConfirmationDialog(QDialog):
         btn_execute.setFixedHeight(40)
         btn_execute.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 2px solid #ff8c00;
-                color: #ff8c00;
-                font-family: 'Courier New', monospace;
-                font-size: 11pt;
-                font-weight: bold;
+                background-color: transparent
+                border: 2px solid #ff8c00
+                color: #ff8c00
+                font-family: 'Courier New', monospace
+                font-size: 11pt
+                font-weight: bold
             }
             QPushButton:hover {
-                background-color: #ff8c00;
-                color: #000000;
+                background-color: #ff8c00
+                color: #000000
             }
         """)
         btn_execute.clicked.connect(self.accept)  # type: ignore
@@ -1792,24 +1840,53 @@ class PurgeConfirmationDialog(QDialog):
                 else:
                     item.setCheckState(Qt.CheckState.Unchecked)
 
-class TuningConfirmationDialog(QDialog):
-    """Interactive confirmation dialog for eSports tuning operations"""
+
+    def mousePressEvent(self, a0: Optional[QMouseEvent]) -> None:
+        if a0 is None:
+            return
+        """Handle mouse press for dragging."""
+        if event is not None and a0.button() == Qt.MouseButton.LeftButton:
+            self.is_dragging = True
+            self.drag_position = a0.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            a0.accept()
     
-    def __init__(self, title: str, targets: List[Tuple[int, str, str, bool]], parent: Optional[QWidget] = None) -> None:
+    def mouseMoveEvent(self, a0: Optional[QMouseEvent]) -> None:
+        if a0 is None:
+            return
+        """Handle mouse move for dragging."""
+        if event is not None and self.is_dragging and self.drag_position is not None:
+            self.move(a0.globalPosition().toPoint() - self.drag_position)
+            a0.accept()
+    
+    def mouseReleaseEvent(self, a0: Optional[QMouseEvent]) -> None:
+        if a0 is None:
+            return
+        """Handle mouse release to stop dragging."""
+        if event is not None:
+            self.is_dragging = False
+            a0.accept()
+
+class TuningConfirmationDialog(QDialog):
+    """Interactive confirmation dialog for eSports tuning operations with RAM/CPU metrics"""
+    
+    def __init__(self, title: str, targets: List[Tuple[int, str, float, float, str, bool]], parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.targets = targets
+        self.targets = targets  # (PID, Name, RAM_MB, CPU_%, Target_State, Is_Recommended)
         self.title_text = title
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
-        self.setModal(True)
-        self.resize(650, 700)
+        self.setWindowModality(Qt.WindowModality.NonModal)
+        self.resize(800, 700)  # Wider for additional columns
+        self.is_dragging: bool = False
+        self.drag_position: Optional[QPoint] = None
+        self.save_checkbox: QCheckBox
         self.setup_ui()
     
     def setup_ui(self) -> None:
         """Setup dialog UI with Cyberdeck styling"""
         self.setStyleSheet("""
             QDialog {
-                background-color: #08080a;
-                border: 2px solid #bc13fe;
+                background-color: #08080a
+                border: 2px solid #bc13fe
             }
         """)
         
@@ -1821,11 +1898,11 @@ class TuningConfirmationDialog(QDialog):
         title = QLabel(self.title_text)
         title.setStyleSheet("""
             QLabel {
-                color: #ff8c00;
-                font-family: 'Courier New', monospace;
-                font-size: 14pt;
-                font-weight: bold;
-                padding: 10px;
+                color: #ff8c00
+                font-family: 'Courier New', monospace
+                font-size: 14pt
+                font-weight: bold
+                padding: 10px
             }
         """)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1838,17 +1915,17 @@ class TuningConfirmationDialog(QDialog):
         btn_select_all = QPushButton("☑ Select All")
         btn_select_all.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 1px solid #00f2ff;
-                color: #00f2ff;
-                font-family: 'Courier New', monospace;
-                font-size: 9pt;
-                font-weight: bold;
-                padding: 8px 12px;
+                background-color: transparent
+                border: 1px solid #00f2ff
+                color: #00f2ff
+                font-family: 'Courier New', monospace
+                font-size: 9pt
+                font-weight: bold
+                padding: 8px 12px
             }
             QPushButton:hover {
-                background-color: #00f2ff;
-                color: #000000;
+                background-color: #00f2ff
+                color: #000000
             }
         """)
         btn_select_all.clicked.connect(self.select_all)  # type: ignore
@@ -1856,17 +1933,17 @@ class TuningConfirmationDialog(QDialog):
         btn_unselect_all = QPushButton("☐ Unselect All")
         btn_unselect_all.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 1px solid #666666;
-                color: #666666;
-                font-family: 'Courier New', monospace;
-                font-size: 9pt;
-                font-weight: bold;
-                padding: 8px 12px;
+                background-color: transparent
+                border: 1px solid #666666
+                color: #666666
+                font-family: 'Courier New', monospace
+                font-size: 9pt
+                font-weight: bold
+                padding: 8px 12px
             }
             QPushButton:hover {
-                background-color: #666666;
-                color: #000000;
+                background-color: #666666
+                color: #000000
             }
         """)
         btn_unselect_all.clicked.connect(self.unselect_all)  # type: ignore
@@ -1877,45 +1954,54 @@ class TuningConfirmationDialog(QDialog):
         
         layout.addLayout(button_row)
         
-        # Table
+        # Table with 6 columns
         self.table = QTableWidget()
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Select", "Process", "Target State"])  # type: ignore[arg-type]
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["Select", "PID", "Process", "RAM (MB)", "CPU (%)", "Target State"])  # type: ignore[arg-type]
         self.table.setRowCount(len(self.targets))
         
         header = self.table.horizontalHeader()
         if header is not None:
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
             header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+            header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+            header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         self.table.setColumnWidth(0, 50)
+        self.table.setColumnWidth(1, 60)
+        self.table.setColumnWidth(3, 90)
+        self.table.setColumnWidth(4, 80)
         
         self.table.setStyleSheet("""
             QTableWidget {
-                background-color: transparent;
-                border: 1px solid #bc13fe;
-                color: #00f2ff;
-                font-family: 'Consolas', monospace;
-                font-size: 9pt;
-                gridline-color: rgba(188, 19, 254, 0.3);
+                background-color: transparent
+                border: 1px solid #bc13fe
+                color: #00f2ff
+                font-family: 'Consolas', monospace
+                font-size: 9pt
+                gridline-color: rgba(188, 19, 254, 0.3)
             }
             QTableWidget::item {
-                padding: 6px;
+                padding: 6px
             }
             QHeaderView::section {
-                background-color: #1a1a1e;
-                color: #bc13fe;
-                font-family: 'Courier New', monospace;
-                font-weight: bold;
-                font-size: 9pt;
-                padding: 8px;
-                border: none;
-                border-bottom: 2px solid #bc13fe;
+                background-color: #1a1a1e
+                color: #bc13fe
+                font-family: 'Courier New', monospace
+                font-weight: bold
+                font-size: 9pt
+                padding: 8px
+                border: none
+                border-bottom: 2px solid #bc13fe
             }
         """)
         
-        # Populate table
-        for row, (pid, name, target_state, is_recommended) in enumerate(self.targets):
+        # Disable sorting during population
+        self.table.setSortingEnabled(False)
+        
+        # Populate table with 6-tuple data
+        for row, (pid, name, ram_mb, cpu_pct, target_state, is_recommended) in enumerate(self.targets):
             # Checkbox column
             check_item: QTableWidgetItem = QTableWidgetItem()
             if is_recommended:
@@ -1926,17 +2012,65 @@ class TuningConfirmationDialog(QDialog):
             check_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, 0, check_item)
             
+            # PID column
+            pid_item: QTableWidgetItem = QTableWidgetItem()
+            pid_item.setData(Qt.ItemDataRole.DisplayRole, pid)
+            pid_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 1, pid_item)
+            
             # Process name
             name_item: QTableWidgetItem = QTableWidgetItem(name)
             name_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            self.table.setItem(row, 1, name_item)
+            self.table.setItem(row, 2, name_item)
+            
+            # RAM (MB) - use numeric data for sorting
+            ram_item: QTableWidgetItem = QTableWidgetItem()
+            ram_item.setData(Qt.ItemDataRole.DisplayRole, round(ram_mb, 1))
+            ram_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 3, ram_item)
+            
+            # CPU (%) - use numeric data for sorting
+            cpu_item: QTableWidgetItem = QTableWidgetItem()
+            cpu_item.setData(Qt.ItemDataRole.DisplayRole, round(cpu_pct, 1))
+            cpu_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 4, cpu_item)
             
             # Target state
             state_item: QTableWidgetItem = QTableWidgetItem(target_state)
             state_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            self.table.setItem(row, 2, state_item)
+            self.table.setItem(row, 5, state_item)
+        
+        # Enable sorting and sort by RAM descending
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(3, Qt.SortOrder.DescendingOrder)
         
         layout.addWidget(self.table)
+        
+        # Save Rules checkbox
+        self.save_checkbox = QCheckBox("💾 Save these rules persistently (Apply on Boot)")
+        self.save_checkbox.setChecked(True)
+        self.save_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #00f2ff
+                font-family: 'Courier New', monospace
+                font-size: 10pt
+                font-weight: 600
+                spacing: 8px
+                padding: 10px
+            }
+            QCheckBox::indicator {
+                width: 20px
+                height: 20px
+                border: 2px solid #00f2ff
+                border-radius: 4px
+                background-color: transparent
+            }
+            QCheckBox::indicator:checked {
+                background-color: #00f2ff
+                border-color: #00f2ff
+            }
+        """)
+        layout.addWidget(self.save_checkbox)
         
         # Buttons
         button_layout = QHBoxLayout()
@@ -1946,16 +2080,16 @@ class TuningConfirmationDialog(QDialog):
         btn_cancel.setFixedHeight(40)
         btn_cancel.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 2px solid #666666;
-                color: #666666;
-                font-family: 'Courier New', monospace;
-                font-size: 11pt;
-                font-weight: bold;
+                background-color: transparent
+                border: 2px solid #666666
+                color: #666666
+                font-family: 'Courier New', monospace
+                font-size: 11pt
+                font-weight: bold
             }
             QPushButton:hover {
-                background-color: #666666;
-                color: #000000;
+                background-color: #666666
+                color: #000000
             }
         """)
         btn_cancel.clicked.connect(self.reject)  # type: ignore
@@ -1964,16 +2098,16 @@ class TuningConfirmationDialog(QDialog):
         btn_execute.setFixedHeight(40)
         btn_execute.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 2px solid #ff8c00;
-                color: #ff8c00;
-                font-family: 'Courier New', monospace;
-                font-size: 11pt;
-                font-weight: bold;
+                background-color: transparent
+                border: 2px solid #ff8c00
+                color: #ff8c00
+                font-family: 'Courier New', monospace
+                font-size: 11pt
+                font-weight: bold
             }
             QPushButton:hover {
-                background-color: #ff8c00;
-                color: #000000;
+                background-color: #ff8c00
+                color: #000000
             }
         """)
         btn_execute.clicked.connect(self.accept)  # type: ignore
@@ -1994,6 +2128,10 @@ class TuningConfirmationDialog(QDialog):
                     selected_pids.append(pid)
         return selected_pids
     
+    def get_results(self) -> Tuple[List[int], bool]:
+        """Return tuple of (selected PIDs, save_to_database flag)"""
+        return (self.get_selected_pids(), self.save_checkbox.isChecked())
+    
     def select_all(self) -> None:
         """Select all checkboxes"""
         for row in range(self.table.rowCount()):
@@ -2007,6 +2145,171 @@ class TuningConfirmationDialog(QDialog):
             item = self.table.item(row, 0)
             if item:
                 item.setCheckState(Qt.CheckState.Unchecked)
+
+
+    def mousePressEvent(self, a0: Optional[QMouseEvent]) -> None:
+        if a0 is None:
+            return
+        """Handle mouse press for dragging."""
+        if event is not None and a0.button() == Qt.MouseButton.LeftButton:
+            self.is_dragging = True
+            self.drag_position = a0.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            a0.accept()
+    
+    def mouseMoveEvent(self, a0: Optional[QMouseEvent]) -> None:
+        if a0 is None:
+            return
+        """Handle mouse move for dragging."""
+        if event is not None and self.is_dragging and self.drag_position is not None:
+            self.move(a0.globalPosition().toPoint() - self.drag_position)
+            a0.accept()
+    
+    def mouseReleaseEvent(self, a0: Optional[QMouseEvent]) -> None:
+        if a0 is None:
+            return
+        """Handle mouse release to stop dragging."""
+        if event is not None:
+            self.is_dragging = False
+            a0.accept()
+
+class SecurityMonitorThread(QThread):
+    """Background thread for advanced security monitoring (USB, Webcam, Registry)"""
+    
+    security_event = pyqtSignal(str, str, str)  # event_type, description, severity
+    
+    def __init__(self) -> None:
+        super().__init__()
+        self.is_running: bool = False
+        self.known_usb_devices: set[str] = set()
+        self.last_webcam_check: float = 0.0
+        
+    def run(self) -> None:
+        """Main security monitoring loop"""
+        self.is_running = True
+        logger.info("[SEC] Security monitor thread started")
+        
+        # Initialize known USB devices
+        self.known_usb_devices = self.get_usb_devices()
+        
+        while self.is_running:
+            try:
+                # USB Device Detection (every 3 seconds)
+                current_devices: set[str] = self.get_usb_devices()
+                new_devices: set[str] = current_devices - self.known_usb_devices
+                removed_devices: set[str] = self.known_usb_devices - current_devices
+                
+                if new_devices:
+                    for device in new_devices:
+                        self.security_event.emit("USB_CONNECTED", f"New USB device: {device}", "WARNING")
+                        logger.warning(f"[SEC] USB device connected: {device}")
+                
+                if removed_devices:
+                    for device in removed_devices:
+                        self.security_event.emit("USB_DISCONNECTED", f"USB device removed: {device}", "INFO")
+                
+                self.known_usb_devices = current_devices
+                
+                # Webcam/Microphone Detection (every 5 seconds)
+                if time.time() - self.last_webcam_check > 5.0:
+                    webcam_active: bool = self.check_webcam_active()
+                    mic_active: bool = self.check_microphone_active()
+                    
+                    if webcam_active:
+                        self.security_event.emit("WEBCAM_ACTIVE", "Webcam is currently in use", "WARNING")
+                        logger.warning("[SEC] Webcam detected as active")
+                    
+                    if mic_active:
+                        self.security_event.emit("MICROPHONE_ACTIVE", "Microphone is currently in use", "WARNING")
+                        logger.warning("[SEC] Microphone detected as active")
+                    
+                    self.last_webcam_check = time.time()
+                
+                time.sleep(3.0)
+                
+            except Exception as e:
+                logger.error(f"[SEC] Security monitor error: {e}")
+                time.sleep(5.0)
+    
+    def get_usb_devices(self) -> set[str]:
+        """Get list of connected USB devices using WMI"""
+        devices: set[str] = set()
+        if not WMI_AVAILABLE:
+            logger.debug("WMI not available, using PowerShell fallback for USB detection")
+            try:
+                result: subprocess.CompletedProcess[str] = subprocess.run(
+                    ['powershell', '-Command', "Get-PnpDevice | Where-Object {$_.InstanceId -like '*USB*'} | Select-Object -ExpandProperty FriendlyName"],
+                    capture_output=True, text=True, timeout=5, creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        if line.strip():
+                            devices.add(line.strip())
+            except Exception as e:
+                logger.debug(f"USB detection fallback error: {e}")
+            return devices
+        
+        try:
+            import wmi  # type: ignore[reportMissingImports]
+            c = wmi.WMI()  # type: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            for _ in c.Win32_PnPEntity():  # type: ignore[reportUnknownMemberType, reportUnknownVariableType, reportUnknownArgumentType]
+                if _.DeviceID and 'USB' in _.DeviceID:  # type: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+                    device_name: str = _.Name if _.Name else _.DeviceID  # type: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+                    devices.add(device_name)  # type: ignore[reportUnknownArgumentType]
+        except Exception as e:
+            logger.debug(f"USB detection error: {e}")
+        return devices
+    
+    def check_webcam_active(self) -> bool:
+        """Check if webcam is currently active via Registry"""
+        try:
+            key_path: str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam\NonPackaged"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ) as key:
+                i: int = 0
+                while True:
+                    try:
+                        subkey_name: str = winreg.EnumKey(key, i)
+                        with winreg.OpenKey(key, subkey_name, 0, winreg.KEY_READ) as subkey:
+                            try:
+                                last_used_stop, _ = winreg.QueryValueEx(subkey, "LastUsedTimeStop")
+                                if last_used_stop == 0:
+                                    return True
+                            except WindowsError:
+                                pass
+                        i += 1
+                    except WindowsError:
+                        break
+        except Exception as e:
+            logger.debug(f"Webcam check error: {e}")
+        return False
+    
+    def check_microphone_active(self) -> bool:
+        """Check if microphone is currently active via Registry"""
+        try:
+            key_path: str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ) as key:
+                i: int = 0
+                while True:
+                    try:
+                        subkey_name: str = winreg.EnumKey(key, i)
+                        with winreg.OpenKey(key, subkey_name, 0, winreg.KEY_READ) as subkey:
+                            try:
+                                last_used_stop, _ = winreg.QueryValueEx(subkey, "LastUsedTimeStop")
+                                if last_used_stop == 0:
+                                    return True
+                            except WindowsError:
+                                pass
+                        i += 1
+                    except WindowsError:
+                        break
+        except Exception as e:
+            logger.debug(f"Microphone check error: {e}")
+        return False
+    
+    def stop(self) -> None:
+        """Stop the security monitoring thread"""
+        self.is_running = False
+        logger.info("[SEC] Security monitor thread stopping")
+
 
 class HardwareMonitorWorker(QObject):
     """Worker thread for hardware monitoring - runs in separate thread"""
@@ -2050,22 +2353,22 @@ class HardwareMonitorWorker(QObject):
                 self.gpu_handle = None
                 return
             
-            cast(Any, pynvml.nvmlInit())  # type: ignore[attr-defined]
+            cast(Any, pynvml.nvmlInit()  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType])  # type: ignore[attr-defined]
             logger.info("NVML initialized successfully")
             
-            device_count: int = cast(int, pynvml.nvmlDeviceGetCount())  # type: ignore[attr-defined]
+            device_count: int = cast(int, pynvml.nvmlDeviceGetCount()  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType])  # type: ignore[attr-defined]
             logger.info(f"Found {device_count} NVIDIA GPU device(s)")
             
             # Loop through devices to find one that supports power usage
             for i in range(device_count):
                 try:
-                    handle: Any = cast(Any, pynvml.nvmlDeviceGetHandleByIndex(i))  # type: ignore[attr-defined]
-                    device_name: str = str(cast(str, pynvml.nvmlDeviceGetName(handle)))  # type: ignore[attr-defined]
+                    handle: Any = cast(Any, pynvml.nvmlDeviceGetHandleByIndex(i)  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType, reportCallIssue])  # type: ignore[attr-defined]
+                    device_name: str = str(cast(str, pynvml.nvmlDeviceGetName(handle)  # type: ignore))  # type: ignore[attr-defined]
                     logger.debug(f"FOUND GPU: {device_name}")
                     
                     # Test if this device supports power usage query
                     try:
-                        cast(int, pynvml.nvmlDeviceGetPowerUsage(handle))  # type: ignore[attr-defined]
+                        cast(int, pynvml.nvmlDeviceGetPowerUsage(handle)  # type: ignore)  # type: ignore[attr-defined]
                         logger.info(f"SUCCESS: Found GPU {device_name}. Power Support: True")
                         self.gpu_handle = handle
                         return
@@ -2074,6 +2377,8 @@ class HardwareMonitorWorker(QObject):
                         logger.warning(f"POWER SUPPORTED: False ({error_type})")
                         continue
                 
+                except Exception:
+                    pass
                 except Exception as e:
                     error_type = type(e).__name__
                     logger.warning(f"Cannot access GPU {i} ({error_type}): {e}")
@@ -2084,12 +2389,14 @@ class HardwareMonitorWorker(QObject):
             
             if device_count > 0:
                 # Use first device anyway for temp/usage data
-                self.gpu_handle = cast(Any, pynvml.nvmlDeviceGetHandleByIndex(0))  # type: ignore[attr-defined]
+                self.gpu_handle = cast(Any, pynvml.nvmlDeviceGetHandleByIndex(0)  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType, reportCallIssue])  # type: ignore[attr-defined]
                 logger.info("Using first GPU for basic monitoring (no power/fan data)")
             else:
                 self.gpu_handle = None
                 logger.warning("No NVIDIA GPU devices found")
         
+        except Exception:
+            pass
         except Exception as e:
             error_type = type(e).__name__
             logger.error(f"GPU initialization failed ({error_type}): {e}")
@@ -2155,7 +2462,7 @@ class HardwareMonitorWorker(QObject):
             
             # GPU Clock Speed
             try:
-                clock: int = cast(int, pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_GRAPHICS))  # type: ignore[attr-defined]
+                clock: int = cast(int, pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_GRAPHICS)  # type: ignore)  # type: ignore[attr-defined]
                 gpu_data['gpu_clock_mhz'] = float(clock)
             except Exception as e:
                 error_type: str = type(e).__name__
@@ -2164,7 +2471,7 @@ class HardwareMonitorWorker(QObject):
             
             # Power Draw
             try:
-                power: int = cast(int, pynvml.nvmlDeviceGetPowerUsage(handle))  # type: ignore[attr-defined]
+                power: int = cast(int, pynvml.nvmlDeviceGetPowerUsage(handle)  # type: ignore)  # type: ignore[attr-defined]
                 gpu_data['gpu_power_watts'] = float(power) / 1000.0  # Convert milliwatts to watts
             except Exception as e:
                 error_type = type(e).__name__
@@ -2173,7 +2480,7 @@ class HardwareMonitorWorker(QObject):
             
             # Fan Speed (if available)
             try:
-                fan: int = cast(int, pynvml.nvmlDeviceGetFanSpeed(handle))  # type: ignore[attr-defined]
+                fan: int = cast(int, pynvml.nvmlDeviceGetFanSpeed(handle)  # type: ignore)  # type: ignore[attr-defined]
                 gpu_data['gpu_fan_percent'] = float(fan)
             except Exception as e:
                 error_type = type(e).__name__
@@ -2184,7 +2491,7 @@ class HardwareMonitorWorker(QObject):
             try:
                 hotspot_constant = getattr(pynvml, 'NVML_TEMPERATURE_GPU_HOTSPOT', None)
                 if hotspot_constant is not None:
-                    hotspot_temp: int = cast(int, pynvml.nvmlDeviceGetTemperature(handle, hotspot_constant))  # type: ignore[attr-defined]
+                    hotspot_temp: int = cast(int, pynvml.nvmlDeviceGetTemperature(handle, hotspot_constant)  # type: ignore)  # type: ignore[attr-defined]
                     gpu_data['gpu_hotspot_temp'] = float(hotspot_temp)
                 else:
                     gpu_data['gpu_hotspot_temp'] = 0.0
@@ -2195,7 +2502,7 @@ class HardwareMonitorWorker(QObject):
 
             # Throttling Status
             try:
-                throttling: int = cast(int, pynvml.nvmlDeviceGetCurrentClocksThrottleReasons(handle))  # type: ignore[attr-defined]
+                throttling: int = cast(int, pynvml.nvmlDeviceGetCurrentClocksThrottleReasons(handle)  # type: ignore)  # type: ignore[attr-defined]
                 reasons: List[str] = []
                 if throttling & pynvml.nvmlClocksThrottleReasonGpuIdle:  # type: ignore[attr-defined]
                     reasons.append("Idle")
@@ -2383,21 +2690,21 @@ class HardwareMonitorWorker(QObject):
                         handle = self.gpu_handle
                         
                         # Temperature
-                        stats_dict['gpu_temp'] = float(cast(int, pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)))  # type: ignore[attr-defined]
+                        stats_dict['gpu_temp'] = float(cast(int, pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)  # type: ignore))  # type: ignore[attr-defined]
                         
                         # Usage
-                        utilization = cast(Any, pynvml.nvmlDeviceGetUtilizationRates(handle))  # type: ignore[attr-defined]
+                        utilization = cast(Any, pynvml.nvmlDeviceGetUtilizationRates(handle)  # type: ignore)  # type: ignore[attr-defined]
                         stats_dict['gpu_usage'] = float(utilization.gpu)
                         
                         # VRAM
-                        memory = cast(Any, pynvml.nvmlDeviceGetMemoryInfo(handle))  # type: ignore[attr-defined]
+                        memory = cast(Any, pynvml.nvmlDeviceGetMemoryInfo(handle)  # type: ignore)  # type: ignore[attr-defined]
                         stats_dict['gpu_vram_used'] = float(memory.used) / 1024 / 1024 / 1024
                         stats_dict['gpu_vram_total'] = float(memory.total) / 1024 / 1024 / 1024
                         stats_dict['gpu_vram_percent'] = (float(memory.used) / float(memory.total)) * 100
                         
                         # Fan speed
                         try:
-                            fan_speed = cast(int, pynvml.nvmlDeviceGetFanSpeed(handle))  # type: ignore[attr-defined]
+                            fan_speed = cast(int, pynvml.nvmlDeviceGetFanSpeed(handle)  # type: ignore)  # type: ignore[attr-defined]
                             stats_dict['gpu_fan_speed'] = float(fan_speed)
                         except Exception as e:
                             error_type = type(e).__name__
@@ -2406,7 +2713,7 @@ class HardwareMonitorWorker(QObject):
                         
                         # Power Draw (milliwatts -> watts)
                         try:
-                            power_mw = cast(int, pynvml.nvmlDeviceGetPowerUsage(handle))  # type: ignore[attr-defined]
+                            power_mw = cast(int, pynvml.nvmlDeviceGetPowerUsage(handle)  # type: ignore)  # type: ignore[attr-defined]
                             stats_dict['gpu_power_draw'] = float(power_mw) / 1000.0  # Convert mW to W
                         except Exception as e:
                             error_type = type(e).__name__
@@ -2587,6 +2894,10 @@ class VitreosArchitect(QMainWindow):
             sys.exit(1)
             
         # Application state
+
+        # Initialize Active Threat Mitigation
+        self.shield = VitreosShield(alert_callback=self._trigger_shield_alert)
+        self.shield.start()
         self.is_running: bool = False
         self.stats: SystemStats = SystemStats()
         self.config: ConfigDict = self.load_config()
@@ -2613,6 +2924,14 @@ class VitreosArchitect(QMainWindow):
         self.network_analyzer: NetworkAnalyzer = NetworkAnalyzer()
         self.predictive_alert: PredictiveThermalAlert = PredictiveThermalAlert()
         self.alert_manager: AlertManager = AlertManager(self.tray_icon, self.database)
+        
+        # Security monitoring thread
+        self.security_thread: Optional[SecurityMonitorThread] = None
+        self.security_monitoring_active: bool = False
+        
+        # Remote tab checkboxes
+        self.alert_usb_connected: QCheckBox
+        self.alert_webcam_active: QCheckBox
         
         # HUD mode state
         self.hud_mode_active: bool = False
@@ -2683,10 +3002,7 @@ class VitreosArchitect(QMainWindow):
         self.vram_progress_bar: QProgressBar
         self.security_toggle: QPushButton
         self.clear_events_btn: QPushButton
-        self.kill_zombie_btn: QPushButton
         self.webhook_test_btn: QPushButton
-        self.screenshot_btn: QPushButton
-        self.reset_config_btn: QPushButton
         self.remote_webhook_url_input: QLineEdit
         self.alert_high_temp: QCheckBox
         self.alert_high_gpu: QCheckBox
@@ -2704,6 +3020,9 @@ class VitreosArchitect(QMainWindow):
         logger.info("System tray initialized")
         self.setup_monitoring()
         logger.info("Monitoring systems initialized")
+        
+        # Setup logbook file tailing
+        self.setup_logbook_tailing()
         
     def show_error_dialog(self, message: str) -> None:
         """Show error dialog for missing dependencies"""
@@ -2810,14 +3129,14 @@ class VitreosArchitect(QMainWindow):
         """Exit the application completely"""
         logger.info("Exit action triggered from tray")
         # Stop the hardware monitor worker thread
-        if self.monitor_worker is not None:
+        if self.monitor_worker:
             self.monitor_worker.stop()
         if self.monitor_thread is not None and self.monitor_thread.isRunning():
             self.monitor_thread.quit()
             self.monitor_thread.wait()
         
         # Hide tray icon
-        if self.tray_icon is not None:
+        if self.tray_icon:
             self.tray_icon.hide()
         
         # Save config and exit
@@ -2868,26 +3187,26 @@ class VitreosArchitect(QMainWindow):
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet("""
             QTabWidget::pane {
-                border: 1px solid #bc13fe;
-                background-color: #08080a;
+                border: 1px solid #bc13fe
+                background-color: #08080a
             }
             QTabBar::tab {
-                background-color: #1a1a1e;
-                color: #888888;
-                border: 1px solid #2a2a2e;
-                padding: 8px 16px;
-                margin-right: 2px;
-                font-family: 'Courier New', 'Consolas', monospace;
-                font-size: 9pt;
+                background-color: #1a1a1e
+                color: #888888
+                border: 1px solid #2a2a2e
+                padding: 8px 16px
+                margin-right: 2px
+                font-family: 'Courier New', 'Consolas', monospace
+                font-size: 9pt
             }
             QTabBar::tab:selected {
-                background-color: #bc13fe;
-                color: #ffffff;
-                font-weight: bold;
+                background-color: #bc13fe
+                color: #ffffff
+                font-weight: bold
             }
             QTabBar::tab:hover {
-                background-color: #2a2a2e;
-                color: #00f2ff;
+                background-color: #2a2a2e
+                color: #00f2ff
             }
         """)
         
@@ -2910,11 +3229,11 @@ class VitreosArchitect(QMainWindow):
         self.status_bar = QStatusBar()
         self.status_bar.setStyleSheet("""
             QStatusBar {
-                background-color: #08080a;
-                color: #00f2ff;
-                border-top: 2px solid #bc13fe;
-                font-family: 'Courier New', 'Consolas', monospace;
-                font-size: 8pt;
+                background-color: #08080a
+                color: #00f2ff
+                border-top: 2px solid #bc13fe
+                font-family: 'Courier New', 'Consolas', monospace
+                font-size: 8pt
             }
         """)
         self.setStatusBar(self.status_bar)
@@ -2924,25 +3243,25 @@ class VitreosArchitect(QMainWindow):
         # Apply cyberdeck stylesheet with scanline effect and global transparency
         self.setStyleSheet("""
             QMainWindow {
-                background: #08080a;
-                background-image: linear-gradient(0deg, transparent 50%, rgba(188, 19, 254, 0.03) 50%);
-                background-size: 100% 4px;
+                background: #08080a
+                background-image: linear-gradient(0deg, transparent 50%, rgba(188, 19, 254, 0.03) 50%)
+                background-size: 100% 4px
             }
             QWidget {
-                background-color: transparent;
-                font-family: 'Consolas', 'Courier New', monospace;
+                background-color: transparent
+                font-family: 'Consolas', 'Courier New', monospace
             }
             QLabel {
-                background: transparent;
-                font-family: 'Consolas', 'Courier New', monospace;
-                font-size: 8pt;
-                color: rgba(255, 255, 255, 0.6);
+                background: transparent
+                font-family: 'Consolas', 'Courier New', monospace
+                font-size: 8pt
+                color: rgba(255, 255, 255, 0.6)
             }
             VitreosModule QWidget {
-                background: transparent;
+                background: transparent
             }
             QGroupBox {
-                background: transparent;
+                background: transparent
             }
         """)
         
@@ -2952,8 +3271,8 @@ class VitreosArchitect(QMainWindow):
         header_widget = QFrame()
         header_widget.setStyleSheet("""
             QFrame {
-                background-color: transparent;
-                border: none;
+                background-color: transparent
+                border: none
             }
         """)
         header_widget.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -2967,21 +3286,21 @@ class VitreosArchitect(QMainWindow):
         title_label = QLabel("[VITREOS::CYBERDECK]")
         title_label.setStyleSheet("""
             QLabel {
-                color: #bc13fe;
-                font-family: 'Courier New', 'Consolas', monospace;
-                font-size: 14pt;
-                font-weight: bold;
-                letter-spacing: 2px;
+                color: #bc13fe
+                font-family: 'Courier New', 'Consolas', monospace
+                font-size: 14pt
+                font-weight: bold
+                letter-spacing: 2px
             }
         """)
         
         subtitle_label = QLabel(">INFORMATION_OVERLOAD")
         subtitle_label.setStyleSheet("""
             QLabel {
-                color: #00f2ff;
-                font-family: 'Courier New', 'Consolas', monospace;
-                font-size: 8pt;
-                font-weight: normal;
+                color: #00f2ff
+                font-family: 'Courier New', 'Consolas', monospace
+                font-size: 8pt
+                font-weight: normal
             }
         """)
         
@@ -2996,17 +3315,17 @@ class VitreosArchitect(QMainWindow):
         self.mini_mode_button.setFixedSize(35, 20)
         self.mini_mode_button.setStyleSheet("""
             QPushButton {
-                background-color: #08080a;
-                border: 1px solid #bc13fe;
-                border-radius: 0px;
-                color: #bc13fe;
-                font-family: 'Courier New', 'Consolas', monospace;
-                font-size: 8pt;
-                font-weight: bold;
+                background-color: #08080a
+                border: 1px solid #bc13fe
+                border-radius: 0px
+                color: #bc13fe
+                font-family: 'Courier New', 'Consolas', monospace
+                font-size: 8pt
+                font-weight: bold
             }
             QPushButton:hover {
-                background-color: #bc13fe;
-                color: #08080a;
+                background-color: #bc13fe
+                color: #08080a
             }
         """)
         self.mini_mode_button.clicked.connect(self.toggle_hud_mode)  # type: ignore
@@ -3016,37 +3335,37 @@ class VitreosArchitect(QMainWindow):
         minimize_btn.setFixedSize(35, 20)
         minimize_btn.setStyleSheet("""
             QPushButton {
-                background-color: #08080a;
-                border: 1px solid #00f2ff;
-                border-radius: 0px;
-                color: #00f2ff;
-                font-family: 'Courier New', 'Consolas', monospace;
-                font-size: 8pt;
-                font-weight: bold;
+                background-color: #08080a
+                border: 1px solid #00f2ff
+                border-radius: 0px
+                color: #00f2ff
+                font-family: 'Courier New', 'Consolas', monospace
+                font-size: 8pt
+                font-weight: bold
             }
             QPushButton:hover {
-                background-color: #00f2ff;
-                color: #08080a;
+                background-color: #00f2ff
+                color: #08080a
             }
         """)
-        minimize_btn.clicked.connect(self.showMinimized)  # type: ignore
+        minimize_btn.clicked.connect(self.hide_window)  # type: ignore
         
         # Close button
         close_btn = QPushButton("[X]")
         close_btn.setFixedSize(35, 20)
         close_btn.setStyleSheet("""
             QPushButton {
-                background-color: #08080a;
-                border: 1px solid #ff8c00;
-                border-radius: 0px;
-                color: #ff8c00;
-                font-family: 'Courier New', 'Consolas', monospace;
-                font-size: 8pt;
-                font-weight: bold;
+                background-color: #08080a
+                border: 1px solid #ff8c00
+                border-radius: 0px
+                color: #ff8c00
+                font-family: 'Courier New', 'Consolas', monospace
+                font-size: 8pt
+                font-weight: bold
             }
             QPushButton:hover {
-                background-color: #ff8c00;
-                color: #08080a;
+                background-color: #ff8c00
+                color: #08080a
             }
         """)
         close_btn.clicked.connect(self.close)  # type: ignore
@@ -3081,7 +3400,7 @@ class VitreosArchitect(QMainWindow):
         self.status_bar.hide()
         
         # Update button text (null-safe)
-        if self.mini_mode_button is not None:
+        if self.mini_mode_button:
             self.mini_mode_button.setText("□")  # Show maximize symbol
             self.mini_mode_button.setToolTip("Restore to normal size")
         
@@ -3113,12 +3432,12 @@ class VitreosArchitect(QMainWindow):
         self.status_bar.show()
         
         # Update button text (null-safe)
-        if self.mini_mode_button is not None:
+        if self.mini_mode_button:
             self.mini_mode_button.setText("⊞")  # Show minimize symbol
             self.mini_mode_button.setToolTip("Enter HUD mode")
         
         # Restore previous geometry
-        if self.normal_geometry is not None:
+        if self.normal_geometry:
             self.setGeometry(self.normal_geometry)
         
         self.show()
@@ -3136,10 +3455,10 @@ class VitreosArchitect(QMainWindow):
         tab_title = QLabel("VITALS - Real-time System Health")
         tab_title.setStyleSheet("""
             QLabel {
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: 700;
-                margin-bottom: 15px;
+                color: #ffffff
+                font-size: 18px
+                font-weight: 700
+                margin-bottom: 15px
             }
         """)
         vitals_layout.addWidget(tab_title)
@@ -3208,10 +3527,10 @@ class VitreosArchitect(QMainWindow):
         tab_title = QLabel("NETWORK - Connectivity & Traffic Analysis")
         tab_title.setStyleSheet("""
             QLabel {
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: 700;
-                margin-bottom: 15px;
+                color: #ffffff
+                font-size: 18px
+                font-weight: 700
+                margin-bottom: 15px
             }
         """)
         network_layout.addWidget(tab_title)
@@ -3225,51 +3544,51 @@ class VitreosArchitect(QMainWindow):
         adapter_label = QLabel("[ADAPTER_SELECT]")
         adapter_label.setStyleSheet("""
             QLabel {
-                color: #bc13fe;
-                font-family: 'Consolas', monospace;
-                font-size: 9pt;
-                font-weight: bold;
+                color: #bc13fe
+                font-family: 'Consolas', monospace
+                font-size: 9pt
+                font-weight: bold
             }
         """)
         
         self.network_adapter_combo = QComboBox()
         self.network_adapter_combo.setStyleSheet("""
             QComboBox {
-                background-color: #08080a;
-                border: 1px solid #bc13fe;
-                border-radius: 0px;
-                color: #00f2ff;
-                font-family: 'Consolas', monospace;
-                font-size: 8pt;
-                padding: 3px 8px;
-                min-width: 200px;
+                background-color: #08080a
+                border: 1px solid #bc13fe
+                border-radius: 0px
+                color: #00f2ff
+                font-family: 'Consolas', monospace
+                font-size: 8pt
+                padding: 3px 8px
+                min-width: 200px
             }
             QComboBox:hover {
-                border: 1px solid #00f2ff;
+                border: 1px solid #00f2ff
             }
             QComboBox::drop-down {
-                border: none;
-                width: 20px;
+                border: none
+                width: 20px
             }
             QComboBox::down-arrow {
-                image: none;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 6px solid #bc13fe;
-                margin-right: 5px;
+                image: none
+                border-left: 4px solid transparent
+                border-right: 4px solid transparent
+                border-top: 6px solid #bc13fe
+                margin-right: 5px
             }
             QListView {
-                background-color: #08080a;
-                border: 1px solid #bc13fe;
-                outline: none;
+                background-color: #08080a
+                border: 1px solid #bc13fe
+                outline: none
             }
             QListView::item {
-                color: #00f2ff;
-                padding: 4px;
+                color: #00f2ff
+                padding: 4px
             }
             QListView::item:hover, QListView::item:selected {
-                background-color: #bc13fe;
-                color: #ffffff;
+                background-color: #bc13fe
+                color: #ffffff
             }
         """)
         self.network_adapter_combo.addItem("Detecting adapters...")
@@ -3307,19 +3626,19 @@ class VitreosArchitect(QMainWindow):
         hogs_group = QGroupBox("Bandwidth Hogs")
         hogs_group.setStyleSheet("""
             QGroupBox {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                padding: 15px;
-                margin: 0;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                border-radius: 12px
+                padding: 15px
+                margin: 0
             }
             QGroupBox::title {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
+                subcontrol-origin: margin
+                subcontrol-position: top left
+                padding: 0 5px
             }
         """)
         
@@ -3333,18 +3652,18 @@ class VitreosArchitect(QMainWindow):
             header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)  # type: ignore[arg-type]
         self.hogs_table.setStyleSheet("""
             QTableWidget {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                color: #ffffff;
-                font-size: 12px;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                color: #ffffff
+                font-size: 12px
             }
             QTableWidget::item {
-                padding: 5px;
+                padding: 5px
             }
             QHeaderView::section {
-                background-color: rgba(255, 255, 255, 0.1);
-                color: #ffffff;
-                font-weight: 600;
+                background-color: rgba(255, 255, 255, 0.1)
+                color: #ffffff
+                font-weight: 600
             }
         """)
         hogs_layout.addWidget(self.hogs_table)
@@ -3374,10 +3693,10 @@ class VitreosArchitect(QMainWindow):
         tab_title = QLabel("PROCESSES - Purge Protocol")
         tab_title.setStyleSheet("""
             QLabel {
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: 700;
-                margin-bottom: 15px;
+                color: #ffffff
+                font-size: 18px
+                font-weight: 700
+                margin-bottom: 15px
             }
         """)
         processes_layout.addWidget(tab_title)
@@ -3387,18 +3706,18 @@ class VitreosArchitect(QMainWindow):
         purge_btn.setFixedHeight(60)
         purge_btn.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 2px solid #ff8c00;
-                border-radius: 0px;
-                color: #ff8c00;
-                font-family: 'Courier New', monospace;
-                font-size: 14pt;
-                font-weight: bold;
-                padding: 15px;
+                background-color: transparent
+                border: 2px solid #ff8c00
+                border-radius: 0px
+                color: #ff8c00
+                font-family: 'Courier New', monospace
+                font-size: 14pt
+                font-weight: bold
+                padding: 15px
             }
             QPushButton:hover {
-                background-color: #ff8c00;
-                color: #000000;
+                background-color: #ff8c00
+                color: #000000
             }
         """)
         purge_btn.clicked.connect(self.execute_purge_protocol)  # type: ignore
@@ -3408,20 +3727,20 @@ class VitreosArchitect(QMainWindow):
         table_group = QGroupBox("Target Processes")
         table_group.setStyleSheet("""
             QGroupBox {
-                background-color: transparent;
-                border: 1px solid #bc13fe;
-                border-radius: 0px;
-                padding: 15px;
-                margin-top: 10px;
+                background-color: transparent
+                border: 1px solid #bc13fe
+                border-radius: 0px
+                padding: 15px
+                margin-top: 10px
             }
             QGroupBox::title {
-                color: #bc13fe;
-                font-family: 'Courier New', monospace;
-                font-size: 10pt;
-                font-weight: bold;
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
+                color: #bc13fe
+                font-family: 'Courier New', monospace
+                font-size: 10pt
+                font-weight: bold
+                subcontrol-origin: margin
+                subcontrol-position: top left
+                padding: 0 5px
             }
         """)
         
@@ -3435,26 +3754,26 @@ class VitreosArchitect(QMainWindow):
         
         self.processes_table.setStyleSheet("""
             QTableWidget {
-                background-color: transparent;
-                border: none;
-                color: #00f2ff;
-                font-family: 'Consolas', monospace;
-                font-size: 9pt;
-                gridline-color: transparent;
+                background-color: transparent
+                border: none
+                color: #00f2ff
+                font-family: 'Consolas', monospace
+                font-size: 9pt
+                gridline-color: transparent
             }
             QTableWidget::item {
-                padding: 6px;
-                border-bottom: 1px solid rgba(188, 19, 254, 0.2);
+                padding: 6px
+                border-bottom: 1px solid rgba(188, 19, 254, 0.2)
             }
             QHeaderView::section {
-                background-color: transparent;
-                color: #bc13fe;
-                font-family: 'Courier New', monospace;
-                font-weight: bold;
-                font-size: 9pt;
-                padding: 8px;
-                border: none;
-                border-bottom: 2px solid #bc13fe;
+                background-color: transparent
+                color: #bc13fe
+                font-family: 'Courier New', monospace
+                font-weight: bold
+                font-size: 9pt
+                padding: 8px
+                border: none
+                border-bottom: 2px solid #bc13fe
             }
         """)
         
@@ -3470,20 +3789,20 @@ class VitreosArchitect(QMainWindow):
         priority_group = QGroupBox("CPU Priority Engine")
         priority_group.setStyleSheet("""
             QGroupBox {
-                background-color: transparent;
-                border: 1px solid #00f2ff;
-                border-radius: 0px;
-                padding: 15px;
-                margin-top: 10px;
+                background-color: transparent
+                border: 1px solid #00f2ff
+                border-radius: 0px
+                padding: 15px
+                margin-top: 10px
             }
             QGroupBox::title {
-                color: #00f2ff;
-                font-family: 'Courier New', monospace;
-                font-size: 10pt;
-                font-weight: bold;
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
+                color: #00f2ff
+                font-family: 'Courier New', monospace
+                font-size: 10pt
+                font-weight: bold
+                subcontrol-origin: margin
+                subcontrol-position: top left
+                padding: 0 5px
             }
         """)
         
@@ -3497,17 +3816,17 @@ class VitreosArchitect(QMainWindow):
         priority_btn.setFixedHeight(50)
         priority_btn.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 1px solid #00f2ff;
-                border-radius: 0px;
-                color: #00f2ff;
-                font-family: 'Courier New', monospace;
-                font-size: 11pt;
-                font-weight: bold;
+                background-color: transparent
+                border: 1px solid #00f2ff
+                border-radius: 0px
+                color: #00f2ff
+                font-family: 'Courier New', monospace
+                font-size: 11pt
+                font-weight: bold
             }
             QPushButton:hover {
-                background-color: #00f2ff;
-                color: #000000;
+                background-color: #00f2ff
+                color: #000000
             }
         """)
         priority_btn.clicked.connect(self.optimize_cpu_priorities)  # type: ignore
@@ -3517,20 +3836,20 @@ class VitreosArchitect(QMainWindow):
         affinity_group = QGroupBox("Core Affinity Isolator")
         affinity_group.setStyleSheet("""
             QGroupBox {
-                background-color: transparent;
-                border: 1px solid #bc13fe;
-                border-radius: 0px;
-                padding: 15px;
-                margin-top: 10px;
+                background-color: transparent
+                border: 1px solid #bc13fe
+                border-radius: 0px
+                padding: 15px
+                margin-top: 10px
             }
             QGroupBox::title {
-                color: #bc13fe;
-                font-family: 'Courier New', monospace;
-                font-size: 10pt;
-                font-weight: bold;
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
+                color: #bc13fe
+                font-family: 'Courier New', monospace
+                font-size: 10pt
+                font-weight: bold
+                subcontrol-origin: margin
+                subcontrol-position: top left
+                padding: 0 5px
             }
         """)
         
@@ -3544,17 +3863,17 @@ class VitreosArchitect(QMainWindow):
         affinity_btn.setFixedHeight(50)
         affinity_btn.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: 1px solid #bc13fe;
-                border-radius: 0px;
-                color: #bc13fe;
-                font-family: 'Courier New', monospace;
-                font-size: 11pt;
-                font-weight: bold;
+                background-color: transparent
+                border: 1px solid #bc13fe
+                border-radius: 0px
+                color: #bc13fe
+                font-family: 'Courier New', monospace
+                font-size: 11pt
+                font-weight: bold
             }
             QPushButton:hover {
-                background-color: #bc13fe;
-                color: #000000;
+                background-color: #bc13fe
+                color: #000000
             }
         """)
         affinity_btn.clicked.connect(self.isolate_core_affinity)  # type: ignore
@@ -3577,10 +3896,10 @@ class VitreosArchitect(QMainWindow):
         tab_title = QLabel("GPU PRO - Advanced NVIDIA Statistics")
         tab_title.setStyleSheet("""
             QLabel {
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: 700;
-                margin-bottom: 15px;
+                color: #ffffff
+                font-size: 18px
+                font-weight: 700
+                margin-bottom: 15px
             }
         """)
         gpu_layout.addWidget(tab_title)
@@ -3625,17 +3944,17 @@ class VitreosArchitect(QMainWindow):
         self.vram_progress_bar = QProgressBar()
         self.vram_progress_bar.setStyleSheet("""
             QProgressBar {
-                background-color: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-                text-align: center;
+                background-color: rgba(255, 255, 255, 0.1)
+                border: 1px solid rgba(255, 255, 255, 0.2)
+                border-radius: 8px
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
+                text-align: center
             }
             QProgressBar::chunk {
-                background-color: #6366f1;
-                border-radius: 6px;
+                background-color: #6366f1
+                border-radius: 6px
             }
         """)
         grid_layout.addWidget(self.vram_progress_bar, 2, 0, 1, 3)
@@ -3654,10 +3973,10 @@ class VitreosArchitect(QMainWindow):
         tab_title = QLabel("STORAGE - Disk Usage & I/O Activity")
         tab_title.setStyleSheet("""
             QLabel {
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: 700;
-                margin-bottom: 15px;
+                color: #ffffff
+                font-size: 18px
+                font-weight: 700
+                margin-bottom: 15px
             }
         """)
         storage_layout.addWidget(tab_title)
@@ -3666,18 +3985,18 @@ class VitreosArchitect(QMainWindow):
         drives_group = QGroupBox("Disk Drives")
         drives_group.setStyleSheet("""
             QGroupBox {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                padding: 15px;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                border-radius: 12px
+                padding: 15px
             }
             QGroupBox::title {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
+                subcontrol-origin: margin
+                subcontrol-position: top left
+                padding: 0 5px
             }
         """)
         
@@ -3691,19 +4010,19 @@ class VitreosArchitect(QMainWindow):
         
         self.drives_table.setStyleSheet("""
             QTableWidget {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                color: #ffffff;
-                font-size: 12px;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                color: #ffffff
+                font-size: 12px
             }
             QTableWidget::item {
-                padding: 8px;
+                padding: 8px
             }
             QHeaderView::section {
-                background-color: rgba(255, 255, 255, 0.1);
-                color: #ffffff;
-                font-weight: 600;
-                padding: 8px;
+                background-color: rgba(255, 255, 255, 0.1)
+                color: #ffffff
+                font-weight: 600
+                padding: 8px
             }
         """)
         
@@ -3714,18 +4033,18 @@ class VitreosArchitect(QMainWindow):
         io_group = QGroupBox("I/O Activity")
         io_group.setStyleSheet("""
             QGroupBox {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                padding: 15px;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                border-radius: 12px
+                padding: 15px
             }
             QGroupBox::title {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
+                subcontrol-origin: margin
+                subcontrol-position: top left
+                padding: 0 5px
             }
         """)
         
@@ -3763,10 +4082,10 @@ class VitreosArchitect(QMainWindow):
         tab_title = QLabel("SECURITY - PC Integrity Monitoring")
         tab_title.setStyleSheet("""
             QLabel {
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: 700;
-                margin-bottom: 15px;
+                color: #ffffff
+                font-size: 18px
+                font-weight: 700
+                margin-bottom: 15px
             }
         """)
         security_layout.addWidget(tab_title)
@@ -3777,17 +4096,17 @@ class VitreosArchitect(QMainWindow):
         self.security_toggle = QPushButton("🛡️ Start Security Monitoring")
         self.security_toggle.setStyleSheet("""
             QPushButton {
-                background-color: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                padding: 10px 20px;
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
+                background-color: rgba(255, 255, 255, 0.1)
+                border: 1px solid rgba(255, 255, 255, 0.2)
+                border-radius: 8px
+                padding: 10px 20px
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
             }
             QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.2);
-                border-color: #4ade80;
+                background-color: rgba(255, 255, 255, 0.2)
+                border-color: #4ade80
             }
         """)
         self.security_toggle.clicked.connect(self.toggle_security_monitoring)  # type: ignore
@@ -3795,17 +4114,17 @@ class VitreosArchitect(QMainWindow):
         self.clear_events_btn = QPushButton("🧹 Clear Events")
         self.clear_events_btn.setStyleSheet("""
             QPushButton {
-                background-color: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                padding: 10px 20px;
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
+                background-color: rgba(255, 255, 255, 0.1)
+                border: 1px solid rgba(255, 255, 255, 0.2)
+                border-radius: 8px
+                padding: 10px 20px
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
             }
             QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.2);
-                border-color: #ff4444;
+                background-color: rgba(255, 255, 255, 0.2)
+                border-color: #ff4444
             }
         """)
         self.clear_events_btn.clicked.connect(self.clear_security_events)  # type: ignore
@@ -3820,19 +4139,19 @@ class VitreosArchitect(QMainWindow):
         events_group = QGroupBox("Security Events")
         events_group.setStyleSheet("""
             QGroupBox {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                padding: 15px;
-                margin: 0;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                border-radius: 12px
+                padding: 15px
+                margin: 0
             }
             QGroupBox::title {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
+                subcontrol-origin: margin
+                subcontrol-position: top left
+                padding: 0 5px
             }
         """)
         
@@ -3845,18 +4164,18 @@ class VitreosArchitect(QMainWindow):
             header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)  # type: ignore[arg-type]
         self.events_table.setStyleSheet("""
             QTableWidget {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                color: #ffffff;
-                font-size: 12px;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                color: #ffffff
+                font-size: 12px
             }
             QTableWidget::item {
-                padding: 5px;
+                padding: 5px
             }
             QHeaderView::section {
-                background-color: rgba(255, 255, 255, 0.1);
-                color: #ffffff;
-                font-weight: 600;
+                background-color: rgba(255, 255, 255, 0.1)
+                color: #ffffff
+                font-weight: 600
             }
         """)
         events_layout.addWidget(self.events_table)
@@ -3873,10 +4192,10 @@ class VitreosArchitect(QMainWindow):
         tab_title = QLabel("LOGBOOK - Historical Data & Analytics")
         tab_title.setStyleSheet("""
             QLabel {
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: 700;
-                margin-bottom: 15px;
+                color: #ffffff
+                font-size: 18px
+                font-weight: 700
+                margin-bottom: 15px
             }
         """)
         logbook_layout.addWidget(tab_title)
@@ -3886,13 +4205,13 @@ class VitreosArchitect(QMainWindow):
         self.logbook_list_widget.setReadOnly(True)
         self.logbook_list_widget.setStyleSheet("""
             QTextEdit {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-                color: #ffffff;
-                font-family: 'Courier New', monospace;
-                font-size: 11px;
-                padding: 10px;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                border-radius: 8px
+                color: #ffffff
+                font-family: 'Courier New', monospace
+                font-size: 11px
+                padding: 10px
             }
         """)
         logbook_layout.addWidget(self.logbook_list_widget)
@@ -3901,17 +4220,17 @@ class VitreosArchitect(QMainWindow):
         self.generate_report_btn = QPushButton("📊 GENERATE_REPORT")
         self.generate_report_btn.setStyleSheet("""
             QPushButton {
-                background-color: rgba(0, 242, 255, 0.2);
-                border: 1px solid #00f2ff;
-                border-radius: 0px;
-                color: #00f2ff;
-                font-family: 'Courier New';
-                font-size: 11pt;
-                font-weight: bold;
-                padding: 10px;
+                background-color: rgba(0, 242, 255, 0.2)
+                border: 1px solid #00f2ff
+                border-radius: 0px
+                color: #00f2ff
+                font-family: 'Courier New'
+                font-size: 11pt
+                font-weight: bold
+                padding: 10px
             }
             QPushButton:hover {
-                background-color: rgba(0, 242, 255, 0.3);
+                background-color: rgba(0, 242, 255, 0.3)
             }
         """)
         self.generate_report_btn.clicked.connect(self.generate_stability_report)  # type: ignore
@@ -3923,7 +4242,7 @@ class VitreosArchitect(QMainWindow):
         
         
     def create_console_tab(self) -> None:
-        """Create the Console tab with active control and live logging"""
+        """Create the Console tab with live debug terminal"""
         console_widget = QWidget()
         console_layout = QVBoxLayout(console_widget)
         
@@ -3931,88 +4250,42 @@ class VitreosArchitect(QMainWindow):
         tab_title = QLabel("CONSOLE - Live Debug Terminal")
         tab_title.setStyleSheet("""
             QLabel {
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: 700;
-                margin-bottom: 15px;
+                color: #ffffff
+                font-size: 18px
+                font-weight: 700
+                margin-bottom: 15px
             }
         """)
         console_layout.addWidget(tab_title)
         
-        # Discord webhook configuration group
-        webhook_group = QGroupBox("Discord Webhook Configuration")
-        webhook_group.setStyleSheet("""
-            QGroupBox {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                padding: 15px;
-                margin: 0;
-            }
-            QGroupBox::title {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
-            }
-        """)
+        # Test Webhook button (single action)
+        webhook_test_container = QWidget()
+        webhook_test_layout = QHBoxLayout(webhook_test_container)
+        webhook_test_layout.setContentsMargins(0, 0, 0, 10)
         
-        webhook_layout = QVBoxLayout(webhook_group)
-        
-        # Discord webhook input
-        webhook_label = QLabel("Discord Webhook URL")
-        webhook_label.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: 500;")
-        
-        self.webhook_input = QLineEdit()
-        self.webhook_input.setPlaceholderText("Enter Discord webhook URL...")
-        self.webhook_input.setStyleSheet("""
-            QLineEdit {
-                background-color: rgba(255, 255, 255, 0.1);
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 8px;
-                padding: 8px 12px;
-                color: #ffffff;
-                font-size: 12px;
+        self.webhook_test_btn = QPushButton("🧪 Test Discord Webhook")
+        self.webhook_test_btn.setFixedHeight(40)
+        self.webhook_test_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(0, 242, 255, 0.1)
+                border: 1px solid #00f2ff
+                border-radius: 6px
+                padding: 10px 20px
+                color: #00f2ff
+                font-family: 'Courier New', monospace
+                font-size: 11pt
+                font-weight: 600
             }
-            QLineEdit:focus {
-                border-color: #00f2ff;
-                background-color: rgba(255, 255, 255, 0.15);
+            QPushButton:hover {
+                background-color: rgba(0, 242, 255, 0.2)
+                border-color: #00f2ff
             }
         """)
-        
-        webhook_layout.addWidget(webhook_label)
-        webhook_layout.addWidget(self.webhook_input)
-        console_layout.addWidget(webhook_group)
-        
-        # Console controls grid
-        grid_layout = QGridLayout()
-        grid_layout.setSpacing(15)
-        
-        # Control buttons
-        self.kill_zombie_btn = QPushButton("💀 Kill Zombie Processes")
-        self.kill_zombie_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #ff4444; }")
-        self.kill_zombie_btn.clicked.connect(self.kill_zombie_processes)  # type: ignore
-        
-        self.webhook_test_btn = QPushButton("🧪 Test Webhook")
-        self.webhook_test_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #00f2ff; }")
         self.webhook_test_btn.clicked.connect(self.test_webhook)  # type: ignore
         
-        self.screenshot_btn = QPushButton("📸 Take Screenshot")
-        self.screenshot_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #4ade80; }")
-        self.screenshot_btn.clicked.connect(self.take_screenshot)  # type: ignore
-        
-        self.reset_config_btn = QPushButton("🔄 Reset Configuration")
-        self.reset_config_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 12px; color: #ffffff; font-size: 12px; font-weight: 600; } QPushButton:hover { border-color: #ff4444; }")
-        self.reset_config_btn.clicked.connect(self.reset_configuration)  # type: ignore
-        
-        grid_layout.addWidget(self.kill_zombie_btn, 0, 0)
-        grid_layout.addWidget(self.webhook_test_btn, 0, 1)
-        grid_layout.addWidget(self.screenshot_btn, 1, 0)
-        grid_layout.addWidget(self.reset_config_btn, 1, 1)
-        
-        console_layout.addLayout(grid_layout)
+        webhook_test_layout.addWidget(self.webhook_test_btn)
+        webhook_test_layout.addStretch()
+        console_layout.addWidget(webhook_test_container)
         
         # --- THE CMD TERMINAL (BULLETPROOF FIX) ---
         self.console_output = QPlainTextEdit()
@@ -4020,14 +4293,14 @@ class VitreosArchitect(QMainWindow):
         self.console_output.setMinimumHeight(300)  # THIS PREVENTS IT FROM DISAPPEARING
         self.console_output.setStyleSheet("""
             QPlainTextEdit {
-                background-color: #0a0a0a;
-                color: #00ff00;
-                border: 1px solid rgba(0, 255, 0, 0.2);
-                border-radius: 6px;
-                font-family: 'Consolas', 'Courier New', monospace;
-                font-size: 12px;
-                padding: 10px;
-                margin-top: 15px;
+                background-color: #0a0a0a
+                color: #00ff00
+                border: 1px solid rgba(0, 255, 0, 0.2)
+                border-radius: 6px
+                font-family: 'Consolas', 'Courier New', monospace
+                font-size: 12px
+                padding: 10px
+                margin-top: 15px
             }
         """)
         self.console_output.setPlaceholderText("Waiting for debug output...")
@@ -4046,10 +4319,10 @@ class VitreosArchitect(QMainWindow):
         tab_title = QLabel("REMOTE - Discord Integration & Alerts")
         tab_title.setStyleSheet("""
             QLabel {
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: 700;
-                margin-bottom: 15px;
+                color: #ffffff
+                font-size: 18px
+                font-weight: 700
+                margin-bottom: 15px
             }
         """)
         remote_layout.addWidget(tab_title)
@@ -4058,18 +4331,18 @@ class VitreosArchitect(QMainWindow):
         webhook_group = QGroupBox("Discord Webhook Configuration")
         webhook_group.setStyleSheet("""
             QGroupBox {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                padding: 15px;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                border-radius: 12px
+                padding: 15px
             }
             QGroupBox::title {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
+                subcontrol-origin: margin
+                subcontrol-position: top left
+                padding: 0 5px
             }
         """)
         
@@ -4087,14 +4360,14 @@ class VitreosArchitect(QMainWindow):
         self.remote_webhook_url_input.setPlaceholderText("https://discord.com/api/webhooks/...")
         self.remote_webhook_url_input.setStyleSheet("""
             QLineEdit {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 6px;
-                color: #ffffff;
-                padding: 8px;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                border-radius: 6px
+                color: #ffffff
+                padding: 8px
             }
             QLineEdit:focus {
-                border: 1px solid #00f2ff;
+                border: 1px solid #00f2ff
             }
         """)
         webhook_layout.addWidget(self.remote_webhook_url_input)
@@ -4103,15 +4376,15 @@ class VitreosArchitect(QMainWindow):
         save_webhook_btn = QPushButton("Save Webhook")
         save_webhook_btn.setStyleSheet("""
             QPushButton {
-                background-color: rgba(0, 242, 255, 0.2);
-                border: 1px solid #00f2ff;
-                border-radius: 6px;
-                color: #00f2ff;
-                font-weight: 600;
-                padding: 8px;
+                background-color: rgba(0, 242, 255, 0.2)
+                border: 1px solid #00f2ff
+                border-radius: 6px
+                color: #00f2ff
+                font-weight: 600
+                padding: 8px
             }
             QPushButton:hover {
-                background-color: rgba(0, 242, 255, 0.3);
+                background-color: rgba(0, 242, 255, 0.3)
             }
         """)
         webhook_layout.addWidget(save_webhook_btn)
@@ -4122,18 +4395,18 @@ class VitreosArchitect(QMainWindow):
         alert_group = QGroupBox("Alert Triggers")
         alert_group.setStyleSheet("""
             QGroupBox {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                padding: 15px;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                border-radius: 12px
+                padding: 15px
             }
             QGroupBox::title {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
+                subcontrol-origin: margin
+                subcontrol-position: top left
+                padding: 0 5px
             }
         """)
         
@@ -4173,10 +4446,10 @@ class VitreosArchitect(QMainWindow):
         tab_title = QLabel("SETTINGS - Application Configuration")
         tab_title.setStyleSheet("""
             QLabel {
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: 700;
-                margin-bottom: 15px;
+                color: #ffffff
+                font-size: 18px
+                font-weight: 700
+                margin-bottom: 15px
             }
         """)
         settings_layout.addWidget(tab_title)
@@ -4185,19 +4458,19 @@ class VitreosArchitect(QMainWindow):
         settings_group = QGroupBox("System Settings")
         settings_group.setStyleSheet("""
             QGroupBox {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                padding: 15px;
-                margin: 0;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                border-radius: 12px
+                padding: 15px
+                margin: 0
             }
             QGroupBox::title {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 5px;
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
+                subcontrol-origin: margin
+                subcontrol-position: top left
+                padding: 0 5px
             }
         """)
         
@@ -4208,24 +4481,24 @@ class VitreosArchitect(QMainWindow):
         self.startup_checkbox = QCheckBox("Start with Windows")
         self.startup_checkbox.setStyleSheet("""
             QCheckBox {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 500;
-                spacing: 8px;
+                color: #ffffff
+                font-size: 12px
+                font-weight: 500
+                spacing: 8px
             }
             QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 4px;
-                background-color: rgba(255, 255, 255, 0.05);
+                width: 18px
+                height: 18px
+                border: 1px solid rgba(255, 255, 255, 0.2)
+                border-radius: 4px
+                background-color: rgba(255, 255, 255, 0.05)
             }
             QCheckBox::indicator:checked {
-                background-color: #00f2ff;
-                border-color: #00f2ff;
+                background-color: #00f2ff
+                border-color: #00f2ff
             }
             QCheckBox::indicator:hover {
-                border-color: #00f2ff;
+                border-color: #00f2ff
             }
         """)
         
@@ -4241,15 +4514,15 @@ class VitreosArchitect(QMainWindow):
         heartbeat_group = QGroupBox("Heartbeat Regulator")
         heartbeat_group.setStyleSheet("""
             QGroupBox {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 0px;
-                padding: 15px;
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                border-radius: 0px
+                padding: 15px
             }
             QGroupBox::title {
-                color: #ffffff;
-                font-size: 12px;
-                font-weight: 600;
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
             }
         """)
         
@@ -4260,17 +4533,17 @@ class VitreosArchitect(QMainWindow):
         self.polling_slider.setValue(20)
         self.polling_slider.setStyleSheet("""
             QSlider::groove:horizontal {
-                background: #08080a;
-                height: 8px;
-                border: 1px solid #bc13fe;
-                border-radius: 0px;
+                background: #08080a
+                height: 8px
+                border: 1px solid #bc13fe
+                border-radius: 0px
             }
             QSlider::handle:horizontal {
-                background: #bc13fe;
-                width: 20px;
-                height: 20px;
-                margin: -6px 0;
-                border-radius: 0px;
+                background: #bc13fe
+                width: 20px
+                height: 20px
+                margin: -6px 0
+                border-radius: 0px
             }
         """)
         
@@ -4282,6 +4555,55 @@ class VitreosArchitect(QMainWindow):
         heartbeat_layout.addWidget(self.polling_label)
         heartbeat_layout.addWidget(self.polling_slider)
         settings_group_layout.addWidget(heartbeat_group)
+        
+        # UI Accent Color Theming
+        theme_group = QGroupBox("UI Accent Color")
+        theme_group.setStyleSheet("""
+            QGroupBox {
+                background-color: rgba(255, 255, 255, 0.05)
+                border: 1px solid rgba(255, 255, 255, 0.1)
+                border-radius: 0px
+                padding: 15px
+            }
+            QGroupBox::title {
+                color: #ffffff
+                font-size: 12px
+                font-weight: 600
+            }
+        """)
+        
+        theme_layout = QVBoxLayout(theme_group)
+        
+        self.theme_slider = QSlider(Qt.Orientation.Horizontal)
+        self.theme_slider.setRange(0, 360)
+        self.theme_slider.setValue(280)  # Default purple hue
+        self.theme_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff0000, stop:0.17 #ffff00, stop:0.33 #00ff00,
+                    stop:0.5 #00ffff, stop:0.67 #0000ff, stop:0.83 #ff00ff, stop:1 #ff0000)
+                height: 12px
+                border: 1px solid #bc13fe
+                border-radius: 0px
+            }
+            QSlider::handle:horizontal {
+                background: #ffffff
+                width: 24px
+                height: 24px
+                margin: -6px 0
+                border-radius: 0px
+                border: 2px solid #bc13fe
+            }
+        """)
+        
+        self.theme_label = QLabel("[ACCENT_HUE: 280°]")
+        self.theme_label.setStyleSheet("color: #bc13fe; font-family: 'Courier New'; font-size: 10pt; font-weight: bold;")
+        
+        self.theme_slider.valueChanged.connect(self.on_theme_slider_changed)  # type: ignore
+        
+        theme_layout.addWidget(self.theme_label)
+        theme_layout.addWidget(self.theme_slider)
+        settings_group_layout.addWidget(theme_group)
         
         settings_layout.addWidget(settings_group)
         settings_layout.addStretch()
@@ -4329,6 +4651,9 @@ class VitreosArchitect(QMainWindow):
         log_signal: Any = ui_log_handler.log_signal
         if log_signal is not None:
             log_signal.connect(self.update_console)  # type: ignore[arg-type]
+        
+        # Apply saved process rules in background
+        self.apply_saved_process_rules()
         
         # Create and start hardware monitoring worker thread
         self.monitor_worker = HardwareMonitorWorker()
@@ -4478,18 +4803,104 @@ class VitreosArchitect(QMainWindow):
         """Handle advanced GPU data updates from worker thread"""
         try:
             gpu_clock: float = float(gpu_data.get('gpu_clock_mhz', 0.0))
+            gpu_power: float = float(gpu_data.get('gpu_power_watts', 0.0))
+            gpu_fan: float = float(gpu_data.get('gpu_fan_percent', 0.0))
+            gpu_hotspot: float = float(gpu_data.get('gpu_hotspot_temp', 0.0))
             
             # Update GPU module clock display
             if hasattr(self, 'gpu_content'):
                 self.gpu_content.clock_label.setText(f"CLOCK: {int(gpu_clock)} MHz")
+            
+            # Update GPU Pro tab cards
+            if hasattr(self, 'gpu_clock_card'):
+                status: str = "Boost" if gpu_clock > 1800 else "Normal" if gpu_clock > 1000 else "Idle"
+                color: str = "#ff8c00" if gpu_clock > 1800 else "#00f2ff"
+                self.gpu_clock_card.update_value(gpu_clock, "MHz", status, color)
+            
+            if hasattr(self, 'gpu_power_card'):
+                status = "High" if gpu_power > 200 else "Normal" if gpu_power > 50 else "Idle"
+                color = "#ff8c00" if gpu_power > 200 else "#00f2ff"
+                self.gpu_power_card.update_value(gpu_power, "W", status, color)
+            
+            if hasattr(self, 'gpu_fan_card'):
+                status = "Max" if gpu_fan >= 100 else "High" if gpu_fan > 70 else "Normal"
+                color = "#ff8c00" if gpu_fan >= 100 else "#00f2ff"
+                self.gpu_fan_card.update_value(gpu_fan, "%", status, color)
+            
+            if hasattr(self, 'gpu_hotspot_card') and gpu_hotspot > 0:
+                status = "Critical" if gpu_hotspot > 95 else "Hot" if gpu_hotspot > 85 else "Normal"
+                color = "#ff0000" if gpu_hotspot > 95 else "#ff8c00" if gpu_hotspot > 85 else "#00f2ff"
+                self.gpu_hotspot_card.update_value(gpu_hotspot, "°C", status, color)
             
         except Exception as e:
             logger.error(f"Error updating GPU advanced data: {e}")
     
     def on_storage_updated(self, storage_data: Dict[str, Any]) -> None:
         """Handle storage data updates from worker thread"""
-        # Storage data handling simplified for disk module
-        pass
+        try:
+            # Update drives table
+            if hasattr(self, 'drives_table'):
+                drives: Dict[str, Any] = storage_data.get('drives', {})
+                self.drives_table.setSortingEnabled(False)
+                self.drives_table.setRowCount(len(drives))
+                
+                for row, (device, info) in enumerate(drives.items()):
+                    # Drive name
+                    drive_item: QTableWidgetItem = QTableWidgetItem(info['mountpoint'])
+                    drive_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                    self.drives_table.setItem(row, 0, drive_item)
+                    
+                    # Total GB
+                    total_item: QTableWidgetItem = QTableWidgetItem(str(info['total_gb']))
+                    total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    self.drives_table.setItem(row, 1, total_item)
+                    
+                    # Used GB
+                    used_item: QTableWidgetItem = QTableWidgetItem(str(info['used_gb']))
+                    used_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    self.drives_table.setItem(row, 2, used_item)
+                    
+                    # Free GB
+                    free_item: QTableWidgetItem = QTableWidgetItem(str(info['free_gb']))
+                    free_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    self.drives_table.setItem(row, 3, free_item)
+                    
+                    # Usage %
+                    usage_item: QTableWidgetItem = QTableWidgetItem(f"{info['percent']}%")
+                    usage_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    if info['percent'] > 90:
+                        usage_item.setForeground(QColor("#ff0000"))
+                    elif info['percent'] > 75:
+                        usage_item.setForeground(QColor("#ff8c00"))
+                    self.drives_table.setItem(row, 4, usage_item)
+                
+                self.drives_table.setSortingEnabled(True)
+            
+            # Update I/O cards
+            io_counters: Dict[str, Any] = storage_data.get('io_counters', {})
+            if io_counters:
+                read_gb: float = io_counters.get('read_bytes', 0) / (1024**3)
+                write_gb: float = io_counters.get('write_bytes', 0) / (1024**3)
+                read_count: int = io_counters.get('read_count', 0)
+                write_count: int = io_counters.get('write_count', 0)
+                
+                if hasattr(self, 'read_bytes_card'):
+                    self.read_bytes_card.update_value(read_gb, "GB", "Normal", "#4ade80")
+                if hasattr(self, 'write_bytes_card'):
+                    self.write_bytes_card.update_value(write_gb, "GB", "Normal", "#ff6b6b")
+                if hasattr(self, 'read_count_card'):
+                    self.read_count_card.update_value(read_count / 1000, "K", "Normal", "#00d2ff")
+                if hasattr(self, 'write_count_card'):
+                    self.write_count_card.update_value(write_count / 1000, "K", "Normal", "#ff9800")
+            
+            # Update I/O rate display
+            io_read_mbs: float = storage_data.get('io_read_mbs', 0.0)
+            io_write_mbs: float = storage_data.get('io_write_mbs', 0.0)
+            if io_read_mbs > 0 or io_write_mbs > 0:
+                logger.debug(f"Disk I/O: Read {io_read_mbs:.2f} MB/s, Write {io_write_mbs:.2f} MB/s")
+            
+        except Exception as e:
+            logger.error(f"Error updating storage data: {e}")
     
     def on_network_updated(self, network_data: Dict[str, Any]) -> None:
         """Handle network data updates from worker thread with hogs table auto-sort."""
@@ -4769,44 +5180,94 @@ class VitreosArchitect(QMainWindow):
             return "NORMAL", "#4ade80"
             
     def toggle_security_monitoring(self) -> None:
-        """Toggle security monitoring"""
-        if self.security_monitor.monitoring_active:
-            self.security_monitor.monitoring_active = False
-            self.security_toggle.setText("🛡️ Start Security Monitoring")
-            self.security_toggle.setStyleSheet("""
-                QPushButton {
-                    background-color: rgba(255, 255, 255, 0.1);
-                    border: 1px solid rgba(255, 255, 255, 0.2);
-                    border-radius: 8px;
-                    padding: 10px 20px;
-                    color: #ffffff;
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-                QPushButton:hover {
-                    background-color: rgba(255, 255, 255, 0.2);
-                    border-color: #4ade80;
-                }
-            """)
+        """Toggle advanced security monitoring"""
+        if not self.security_monitoring_active:
+            self.security_thread = SecurityMonitorThread()
+            self.security_thread.security_event.connect(self.on_security_event)  # type: ignore
+            self.security_thread.start()
+            self.security_monitoring_active = True
+            self.security_toggle.setText("??? Stop Security Monitoring")
+            self.update_console("[SEC] Advanced security monitoring started")
         else:
-            self.security_monitor.start_monitoring()
-            self.security_toggle.setText("🛑 Stop Security Monitoring")
-            self.security_toggle.setStyleSheet("""
-                QPushButton {
-                    background-color: rgba(255, 255, 255, 0.1);
-                    border: 1px solid rgba(255, 255, 255, 0.2);
-                    border-radius: 8px;
-                    padding: 10px 20px;
-                    color: #ffffff;
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-                QPushButton:hover {
-                    background-color: rgba(255, 255, 255, 0.2);
-                    border-color: #ff4444;
-                }
-            """)
+            if self.security_thread:
+                self.security_thread.stop()
+                self.security_thread.wait()
+                self.security_thread = None
+            self.security_monitoring_active = False
+            self.security_toggle.setText("??? Start Security Monitoring")
+            self.update_console("[SEC] Advanced security monitoring stopped")
+    
+    def on_security_event(self, event_type: str, description: str, severity: str) -> None:
+        """Handle security events from SecurityMonitorThread"""
+        try:
+            if hasattr(self, 'events_table'):
+                self.events_table.insertRow(0)
+                timestamp: str = datetime.now().strftime("%H:%M:%S")
+                self.events_table.setItem(0, 0, QTableWidgetItem(timestamp))
+                self.events_table.setItem(0, 1, QTableWidgetItem(event_type))
+                self.events_table.setItem(0, 2, QTableWidgetItem(description))
+                severity_item: QTableWidgetItem = QTableWidgetItem(severity)
+                if severity == "WARNING":
+                    severity_item.setForeground(QColor("#ff8c00"))
+                elif severity == "CRITICAL":
+                    severity_item.setForeground(QColor("#ff0000"))
+                self.events_table.setItem(0, 3, severity_item)
+                if self.events_table.rowCount() > 100:
+                    self.events_table.removeRow(100)
+            if event_type == "USB_CONNECTED" and hasattr(self, 'alert_usb_connected') and self.alert_usb_connected.isChecked():
+                self.send_webhook_alert(f"🔔 {event_type}", description, severity="WARNING", fields=[{"name": "Event", "value": event_type, "inline": True}])
+            elif event_type in ["WEBCAM_ACTIVE", "MICROPHONE_ACTIVE"] and hasattr(self, 'alert_webcam_active') and self.alert_webcam_active.isChecked():
+                self.send_webhook_alert(f"🔔 {event_type}", description, severity="CRITICAL", fields=[{"name": "Event", "value": event_type, "inline": True}])
+        except Exception as e:
+            logger.error(f"Error handling security event: {e}")
+    
+    def send_webhook_alert(self, title: str, message: str, severity: str = "INFO", fields: list[dict[str, Any]] | None = None) -> None:
+        """Send rich embed alert to Discord webhook with severity colors and structured fields"""
+        webhook_url = self.webhook_input.text().strip()
+        if not webhook_url:
+            logger.warning("[WARN] No webhook URL configured")
+            return
+        
+        try:
+            # Dynamic color based on severity
+            if severity == "CRITICAL":
+                color_int = 0xFF0000  # Red
+            elif severity == "WARNING":
+                color_int = 0xFFA500  # Orange
+            elif severity == "SUCCESS":
+                color_int = 0x00FF00  # Green
+            else:  # INFO - use local UI theme color
+                import colorsys
+                hue = getattr(self, 'theme_slider', None)
+                if hue and hasattr(hue, 'value'):
+                    h = hue.value() / 360.0
+                    r, g, b = colorsys.hsv_to_rgb(h, 0.8, 1.0)
+                    color_int = (int(r * 255) << 16) + (int(g * 255) << 8) + int(b * 255)
+                else:
+                    color_int = 0xBC13FE  # Default purple
             
+            # Build Discord embed with explicit typing
+            embed: dict[str, Any] = {
+                "title": f"🔔 {title}",
+                "description": message,
+                "color": color_int,
+                "footer": {"text": "Vitreos System Sentinel"},
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            
+            if fields:
+                embed["fields"] = fields
+            
+            payload: dict[str, Any] = {"embeds": [embed]}
+            response = requests.post(webhook_url, json=payload, timeout=5)
+            
+            if response.status_code == 204:
+                logger.info(f"[OK] Webhook embed sent: {title} [{severity}]")
+            else:
+                logger.warning(f"[WARN] Webhook failed: {response.status_code}")
+        except Exception as e:
+            logger.error(f"[WARN] Webhook error: {e}")
+
     def clear_security_events(self) -> None:
         """Clear security events"""
         self.security_monitor.security_events.clear()
@@ -4876,23 +5337,25 @@ class VitreosArchitect(QMainWindow):
     def optimize_cpu_priorities(self) -> None:
         """Set games to High Priority and background apps to Below Normal."""
         import psutil
-        targets: List[Tuple[int, str, str, bool]] = []
+        targets: List[Tuple[int, str, float, float, str, bool]] = []
         my_pid: int = os.getpid()
 
-        for proc in psutil.process_iter(['pid', 'name', 'memory_info']):
+        for proc in psutil.process_iter(['pid', 'name', 'memory_info', 'cpu_percent']):
             try:
                 name: str = proc.info['name'].lower()
                 pid: int = proc.info['pid']
                 mem: float = proc.info['memory_info'].rss / (1024*1024)
+                cpu_pct: float = proc.cpu_percent(interval=0.0)
+                
                 if pid == my_pid or mem < 10.0 or name in CRITICAL_SYSTEM_PROCESSES:
                     continue
 
                 if name in PERFORMANCE_TARGETS:
-                    targets.append((pid, name, "Boost ⚡ (HIGH Priority)", True))
+                    targets.append((pid, name, mem, cpu_pct, "Boost ⚡ (HIGH Priority)", True))
                 elif name in EFFICIENCY_TARGETS:
-                    targets.append((pid, name, "Throttle 🛑 (LOW Priority)", True))
+                    targets.append((pid, name, mem, cpu_pct, "Throttle 🛑 (LOW Priority)", True))
                 else:
-                    targets.append((pid, name, "Throttle 🛑 (LOW Priority)", False))
+                    targets.append((pid, name, mem, cpu_pct, "Throttle 🛑 (LOW Priority)", False))
             except:
                 continue
 
@@ -4902,16 +5365,18 @@ class VitreosArchitect(QMainWindow):
 
         dialog: TuningConfirmationDialog = TuningConfirmationDialog("[ REVIEW PRIORITY OPTIMIZATIONS ]", targets, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            selected_pids: List[int] = dialog.get_selected_pids()
+            selected_pids, save_to_db = dialog.get_results()
             success_count: int = 0
             for pid in selected_pids:
                 try:
                     p: psutil.Process = psutil.Process(pid)
-                    name = p.name().lower()
+                    name: str = p.name().lower()
                     if name in PERFORMANCE_TARGETS:
                         p.nice(psutil.HIGH_PRIORITY_CLASS if hasattr(psutil, 'HIGH_PRIORITY_CLASS') else -10)
+                        if save_to_db: self.database.save_process_rule(name, 'PRIORITY', 'HIGH')
                     else:
                         p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if hasattr(psutil, 'BELOW_NORMAL_PRIORITY_CLASS') else 10)
+                        if save_to_db: self.database.save_process_rule(name, 'PRIORITY', 'BELOW_NORMAL')
                     success_count += 1
                 except psutil.AccessDenied:
                     self.update_console(f"[WARN] Access Denied: Could not change priority for PID {pid}")
@@ -4928,20 +5393,22 @@ class VitreosArchitect(QMainWindow):
             return
 
         restricted_cores: List[int] = [cpu_count - 2, cpu_count - 1]
-        targets: List[Tuple[int, str, str, bool]] = []
+        targets: List[Tuple[int, str, float, float, str, bool]] = []
         my_pid: int = os.getpid()
 
-        for proc in psutil.process_iter(['pid', 'name', 'memory_info']):
+        for proc in psutil.process_iter(['pid', 'name', 'memory_info', 'cpu_percent']):
             try:
                 name: str = proc.info['name'].lower()
                 pid: int = proc.info['pid']
                 mem: float = proc.info['memory_info'].rss / (1024*1024)
+                cpu_pct: float = proc.cpu_percent(interval=0.0)
+                
                 if pid == my_pid or mem < 10.0 or name in CRITICAL_SYSTEM_PROCESSES or name in PERFORMANCE_TARGETS:
                     continue
 
                 # Target both efficiency apps AND known bloatware for core isolation
                 is_target: bool = name in EFFICIENCY_TARGETS or name in KNOWN_BLOATWARE
-                targets.append((pid, name, f"Isolate 🔒 (Cores {restricted_cores})", is_target))
+                targets.append((pid, name, mem, cpu_pct, f"Isolate 🔒 (Cores {restricted_cores})", is_target))
             except:
                 continue
 
@@ -4956,7 +5423,9 @@ class VitreosArchitect(QMainWindow):
             for pid in selected_pids:
                 try:
                     p: psutil.Process = psutil.Process(pid)
+                    name: str = p.name().lower()
                     p.cpu_affinity(restricted_cores)
+                    if save_to_db: self.database.save_process_rule(name, 'AFFINITY', ','.join(map(str, restricted_cores)))
                     success_count += 1
                 except psutil.AccessDenied:
                     self.update_console(f"[WARN] Access Denied: Could not isolate PID {pid}")
@@ -4964,46 +5433,9 @@ class VitreosArchitect(QMainWindow):
                     pass
             self.update_console(f"[SYS] CORE ISOLATOR: Successfully isolated {success_count} processes to cores {restricted_cores}.")
     
-    def kill_zombie_processes(self) -> None:
-        """Kill not responding processes"""
-        try:
-            killed_count = 0
-            for proc in psutil.process_iter(['pid', 'name', 'status']):
-                try:
-                    if proc.info['status'] == psutil.STATUS_ZOMBIE:
-                        proc.kill()
-                        killed_count += 1
-                except:
-                    pass
-                    
-            self.show_status_message(f"Killed {killed_count} zombie processes", "#4ade80")
-        except Exception as e:
-            self.show_status_message(f"Error killing processes: {str(e)}", "#ff4444")
-            
-    def take_screenshot(self) -> None:
-        """Take a screenshot and send to Discord"""
-        try:
-            # This would need implementation for actual screenshot capture
-            # For now, just show a message
-            self.show_status_message("Screenshot functionality coming soon", "#ffd700")
-        except Exception as e:
-            self.show_status_message(f"Screenshot error: {str(e)}", "#ff4444")
-            
-    def reset_configuration(self) -> None:
-        """Reset all configuration to defaults"""
-        try:
-            self.config: ConfigDict = {
-                'webhook_url': '',
-                'temp_monitoring': True,
-                'usage_monitoring': True,
-                'network_monitoring': True
-            }
-            with open('mercury_config.json', 'w') as f:
-                json.dump(self.config, f, indent=2)
-            self.show_status_message("Configuration reset to defaults", "#4ade80")
-        except Exception as e:
-            self.show_status_message(f"Reset error: {str(e)}", "#ff4444")
-            
+
+
+
     def test_webhook(self) -> None:
         """Test Discord webhook connection"""
         webhook_url = self.webhook_input.text().strip()
@@ -5046,13 +5478,86 @@ class VitreosArchitect(QMainWindow):
         self.status_bar.showMessage(message)
         self.status_bar.setStyleSheet(f"""
             QStatusBar {{
-                background-color: rgba(255, 255, 255, 0.05);
-                color: {color};
-                border-top: 1px solid rgba(255, 255, 255, 0.1);
-                font-size: 11px;
-                font-weight: 600;
+                background-color: rgba(255, 255, 255, 0.05)
+                color: {color}
+                border-top: 1px solid rgba(255, 255, 255, 0.1)
+                font-size: 11px
+                font-weight: 600
             }}
         """)
+    
+    def apply_saved_process_rules(self) -> None:
+        """Apply saved process tuning rules from database on startup"""
+        import psutil
+        try:
+            rules: Dict[str, Tuple[str, str]] = self.database.get_all_process_rules()
+            if not rules:
+                logger.info("[SYS] No saved process rules to apply")
+                return
+            
+            applied_count: int = 0
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    name: str = proc.info['name'].lower()
+                    if name in rules:
+                        rule_type, rule_value = rules[name]
+                        p: psutil.Process = psutil.Process(proc.info['pid'])
+                        
+                        if rule_type == 'PRIORITY':
+                            if rule_value == 'HIGH':
+                                p.nice(psutil.HIGH_PRIORITY_CLASS if hasattr(psutil, 'HIGH_PRIORITY_CLASS') else -10)
+                            elif rule_value == 'BELOW_NORMAL':
+                                p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if hasattr(psutil, 'BELOW_NORMAL_PRIORITY_CLASS') else 10)
+                            applied_count += 1
+                            logger.debug(f"Applied PRIORITY rule to {name}: {rule_value}")
+                        
+                        elif rule_type == 'AFFINITY':
+                            cores: List[int] = [int(c) for c in rule_value.split(',')]
+                            p.cpu_affinity(cores)
+                            applied_count += 1
+                            logger.debug(f"Applied AFFINITY rule to {name}: cores {cores}")
+                
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                except Exception as e:
+                    logger.debug(f"Error applying rule: {e}")
+                    continue
+            
+            if applied_count > 0:
+                logger.info(f"[SYS] Applied {applied_count} saved process rules on startup")
+                self.update_console(f"[OK] Applied {applied_count} saved tuning rules")
+        
+        except Exception as e:
+            logger.error(f"Failed to apply saved process rules: {e}")
+    
+    def setup_logbook_tailing(self) -> None:
+        """Setup real-time logbook file tailing"""
+        self.logbook_timer: QTimer = QTimer(self)
+        self.logbook_timer.timeout.connect(self.update_logbook)  # type: ignore
+        self.logbook_timer.start(2000)  # Update every 2 seconds
+        self.logbook_last_position: int = 0
+        logger.info("Logbook tailing initialized")
+    
+    def update_logbook(self) -> None:
+        """Tail the log file and update logbook widget"""
+        try:
+            log_file_path: str = "vitreos_system.log"
+            if not os.path.exists(log_file_path):
+                return
+            
+            with open(log_file_path, 'r', encoding='utf-8') as f:
+                f.seek(self.logbook_last_position)
+                new_lines: str = f.read()
+                if new_lines:
+                    if hasattr(self, 'logbook_list_widget'):
+                        self.logbook_list_widget.append(new_lines)
+                        # Auto-scroll to bottom
+                        scrollbar = self.logbook_list_widget.verticalScrollBar()
+                        if scrollbar:
+                            scrollbar.setValue(scrollbar.maximum())
+                self.logbook_last_position = f.tell()
+        except Exception as e:
+            logger.debug(f"Logbook tailing error: {e}")
         
         # Reset after 3 seconds
         QTimer.singleShot(3000, self.reset_status_style)  # type: ignore[arg-type]
@@ -5061,20 +5566,29 @@ class VitreosArchitect(QMainWindow):
         """Reset status bar style"""
         self.status_bar.setStyleSheet("""
             QStatusBar {
-                background-color: rgba(255, 255, 255, 0.05);
-                color: #888888;
-                border-top: 1px solid rgba(255, 255, 255, 0.1);
-                font-size: 11px;
+                background-color: rgba(255, 255, 255, 0.05)
+                color: #888888
+                border-top: 1px solid rgba(255, 255, 255, 0.1)
+                font-size: 11px
             }
         """)
         
 
     def on_polling_slider_changed(self, value: int) -> None:
-        """Handle polling slider changes"""
+        """Handle polling slider changes and update UI label"""
         interval_ms = value * 100
         interval_sec = value * 0.1
+        
+        # Update label
+        if hasattr(self, 'polling_label') and self.polling_label is not None:
+            self.polling_label.setText(f"[SAMP_FREQ: {interval_ms}ms]")
+        
+        # Update worker thread
         if self.monitor_worker:
-            self.monitor_worker.polling_interval = interval_sec
+            self.monitor_worker.user_polling_interval = interval_sec
+            if not self.monitor_worker.combat_mode_active:
+                self.monitor_worker.polling_interval = interval_sec
+                logger.info(f"[SYS] Polling interval updated to {interval_ms}ms")
         
         # Update Label UI
         color = "#ff8c00" if interval_ms < 300 else "#bc13fe"
@@ -5087,14 +5601,14 @@ class VitreosArchitect(QMainWindow):
         if self.breach_flicker_state:
             self.setStyleSheet("""
                 QMainWindow {
-                    background: #08080a;
-                    border: 3px solid #ff8c00;
+                    background: #08080a
+                    border: 3px solid #ff8c00
                 }
             """)
         else:
             self.setStyleSheet("""
                 QMainWindow {
-                    background: #08080a;
+                    background: #08080a
                 }
             """)
     
@@ -5216,11 +5730,11 @@ class VitreosArchitect(QMainWindow):
                 pass  # Handler already removed
             
             # Hide tray icon immediately
-            if self.tray_icon is not None:
+            if self.tray_icon:
                 self.tray_icon.hide()
             
             # Stop the hardware monitor worker thread
-            if self.monitor_worker is not None:
+            if self.monitor_worker:
                 self.monitor_worker.stop()
             if self.monitor_thread is not None and self.monitor_thread.isRunning():
                 self.monitor_thread.quit()
@@ -5231,6 +5745,8 @@ class VitreosArchitect(QMainWindow):
                 a0.accept()
     
     def mousePressEvent(self, a0: Optional[QMouseEvent]) -> None:
+        if a0 is None:
+            return
         """Handle mouse press - check if in header area for dragging"""
         if a0 is not None and self.header_widget is not None:
             # Get header height and check if click is within header area
@@ -5248,6 +5764,8 @@ class VitreosArchitect(QMainWindow):
         super().mousePressEvent(a0)
     
     def mouseMoveEvent(self, a0: Optional[QMouseEvent]) -> None:
+        if a0 is None:
+            return
         """Handle mouse move - drag window if in drag mode"""
         if a0 is not None and self.is_dragging and self.drag_position is not None:
             # Move window so that the click point stays under the cursor
@@ -5257,6 +5775,8 @@ class VitreosArchitect(QMainWindow):
             super().mouseMoveEvent(a0)
     
     def mouseReleaseEvent(self, a0: Optional[QMouseEvent]) -> None:
+        if a0 is None:
+            return
         """Handle mouse release - stop dragging"""
         if a0 is not None and self.is_dragging:
             self.is_dragging = False
@@ -5264,6 +5784,291 @@ class VitreosArchitect(QMainWindow):
         else:
             super().mouseReleaseEvent(a0)
 
+
+    def on_theme_slider_changed(self, value: int) -> None:
+        """Handle theme color slider adjustments."""
+        self.update_theme_color(value)
+
+    def update_theme_color(self, hue: int) -> None:
+        """Update the application accent color dynamically across all UI elements."""
+        import colorsys
+        r, g, b = colorsys.hsv_to_rgb(hue / 360.0, 1.0, 1.0)
+        hex_color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+        
+        try:
+            # Update slider labels
+            self.theme_label.setStyleSheet(f"color: {hex_color}; font-family: 'Courier New'; font-size: 10pt; font-weight: bold;")
+            self.polling_label.setStyleSheet(f"color: {hex_color}; font-family: 'Courier New'; font-size: 10pt; font-weight: bold;")
+            
+            # Update module borders
+            for module in [self.cpu_window, self.gpu_window, self.mem_window, 
+                          self.net_window, self.thermal_window, self.disk_window]:
+                if module:
+                    module.setStyleSheet(f"""
+                        VitreosModule {{
+                            background-color: #121214
+                            border: 1px solid {hex_color}
+                            border-radius: 0px
+                        }}
+                        VitreosModule:hover {{
+                            border: 1px solid {hex_color}
+                        }}
+                    """)
+            
+            # Update tab widget active tab color
+            if hasattr(self, 'tab_widget'):
+                self.tab_widget.setStyleSheet(f"""
+                    QTabWidget::pane {{
+                        border: 1px solid {hex_color}
+                        background-color: #08080a
+                    }}
+                    QTabBar::tab {{
+                        background-color: #1a1a1e
+                        color: #888888
+                        border: 1px solid #2a2a2e
+                        padding: 8px 16px
+                        margin-right: 2px
+                        font-family: 'Courier New', 'Consolas', monospace
+                        font-size: 9pt
+                    }}
+                    QTabBar::tab:selected {{
+                        background-color: {hex_color}
+                        color: #ffffff
+                        font-weight: bold
+                    }}
+                    QTabBar::tab:hover {{
+                        background-color: #2a2a2e
+                        color: #00f2ff
+                    }}
+                """)
+            
+            logger.debug(f"[SYS] Theme color updated to {hex_color}")
+        except AttributeError as e:
+            logger.debug(f"[SYS] Theme update partial: {e}")
+
+    def _trigger_shield_alert(self, title: str, message: str, severity: str, fields: list[dict[str, Any]]) -> None:
+        """Callback for shield alerts to trigger Discord webhook."""
+        self.send_webhook_alert(title, message, severity, fields)
+
+
+    def on_tweak_ultimate_performance(self) -> None:
+        """Execute Ultimate Performance power plan unlock"""
+        self.log_to_console("[TWEAK] Unlocking Ultimate Performance power plan...")
+        success, message = SystemTweaker.enable_ultimate_performance()
+        status = "SUCCESS" if success else "FAILED"
+        self.log_to_console(f"[TWEAK] [{status}] {message}")
+    
+    def on_tweak_disable_gamedvr(self) -> None:
+        """Execute Game DVR disable"""
+        self.log_to_console("[TWEAK] Disabling Game DVR and Xbox Game Bar...")
+        success, message = SystemTweaker.disable_game_dvr()
+        status = "SUCCESS" if success else "FAILED"
+        self.log_to_console(f"[TWEAK] [{status}] {message}")
+    
+    def on_tweak_disable_telemetry(self) -> None:
+        """Execute telemetry disable"""
+        self.log_to_console("[TWEAK] Disabling Windows telemetry...")
+        success, message = SystemTweaker.disable_telemetry()
+        status = "SUCCESS" if success else "FAILED"
+        self.log_to_console(f"[TWEAK] [{status}] {message}")
+    
+    def on_tweak_flush_cache(self) -> None:
+        """Execute DNS flush and cache clear"""
+        self.log_to_console("[TWEAK] Flushing DNS and clearing temp caches...")
+        success, message = SystemTweaker.flush_dns_and_cache()
+        status = "SUCCESS" if success else "FAILED"
+        self.log_to_console(f"[TWEAK] [{status}] {message}")
+    
+    def on_tweak_system_repair(self) -> None:
+        """Execute SFC & DISM repair (async)"""
+        self.log_to_console("[TWEAK] Starting SFC & DISM system repair (this will take several minutes)...")
+        
+        # Create worker thread for long-running operation
+        from PyQt6.QtCore import QThread
+        
+        class RepairWorker(QThread):
+            def __init__(self, parent_app: "VitreosArchitect") -> None:
+                super().__init__()
+                self.parent_app = parent_app
+            
+            def run(self) -> None:
+                success, message = SystemTweaker.run_system_repair()
+                status = "SUCCESS" if success else "FAILED"
+                self.parent_app.log_to_console(f"[TWEAK] [{status}] System Repair Complete")
+                self.parent_app.log_to_console(f"[TWEAK] Details: {message}")
+        
+        self.repair_worker = RepairWorker(self)
+        self.repair_worker.start()
+    
+
+    def on_gpu_fan_slider_changed(self, value: int) -> None:
+        """Handle fan slider value change"""
+        if hasattr(self, 'gpu_fan_value_label'):
+            self.gpu_fan_value_label.setText(f"{value}%")
+        
+        # Apply fan speed if slider is moved manually
+        if value > 0:
+            self.set_gpu_fan_speed(value)
+    
+    def on_gpu_fan_reset(self) -> None:
+        """Reset GPU fan to automatic control"""
+        self.log_to_console("[GPU] Resetting fan control to automatic mode...")
+        
+        if not NVML_AVAILABLE:
+            self.log_to_console("[GPU] [FAILED] NVML not available")
+            return
+        
+        try:
+            import pynvml
+            pynvml.nvmlInit()  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType]
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType, reportCallIssue]
+            
+            # Reset to default (auto) fan control
+            pynvml.nvmlDeviceSetDefaultFanSpeed_v2(handle)  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType, reportCallIssue]
+            
+            self.log_to_console("[GPU] [SUCCESS] Fan control reset to automatic")
+            
+            # Reset slider to 0
+            if hasattr(self, 'gpu_fan_slider'):
+                self.gpu_fan_slider.setValue(0)
+            
+            pynvml.nvmlShutdown()  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType]
+            
+        except Exception as e:
+            self.log_to_console(f"[GPU] [WARNING] Fan reset failed: {str(e)}")
+            self.log_to_console("[GPU] Your GPU/driver may not support fan control")
+    
+    def set_gpu_fan_speed(self, speed_pct: int) -> None:
+        """
+        Set GPU fan speed override using pynvml
+        Args:
+            speed_pct: Fan speed percentage (0-100)
+        """
+        if not NVML_AVAILABLE:
+            self.log_to_console("[GPU] [FAILED] NVML not available for fan control")
+            return
+        
+        try:
+            import pynvml
+            pynvml.nvmlInit()  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType]
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType, reportCallIssue]
+            
+            # Set fan speed (some GPUs require fan index, default to 0)
+            try:
+                # Try newer API first
+                pynvml.nvmlDeviceSetFanSpeed_v2(handle, 0, speed_pct)  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType, reportCallIssue]
+            except AttributeError:
+                # Fallback to older API
+                pynvml.nvmlDeviceSetFanControlPolicy(handle, 0, 1)  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType, reportCallIssue]  # Manual mode
+                pynvml.nvmlDeviceSetFanSpeed(handle, speed_pct)  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType, reportCallIssue]
+            
+            self.log_to_console(f"[GPU] [SUCCESS] Fan speed set to {speed_pct}%")
+            pynvml.nvmlShutdown()  # type: ignore[reportMissingTypeStubs, reportUnknownMemberType]
+            
+        except Exception as e:
+            # Many laptop GPUs and locked drivers don't support fan control
+            self.log_to_console(f"[GPU] [WARNING] Fan control not supported: {str(e)}")
+            self.log_to_console("[GPU] This is normal for laptop GPUs or locked drivers")
+    
+
+    def on_purge_shader_cache(self) -> None:
+        """Purge DirectX shader caches (async)"""
+        self.log_to_console("[STORAGE] Starting DirectX shader cache purge...")
+        
+        from PyQt6.QtCore import QThread
+        import shutil
+        import os
+        
+        class ShaderPurgeWorker(QThread):
+            def __init__(self, parent_app: "VitreosArchitect") -> None:
+                super().__init__()
+                self.parent_app = parent_app
+            
+            def run(self) -> None:
+                total_freed_mb = 0
+                
+                # Target directories
+                localappdata = os.environ.get("LOCALAPPDATA", "")
+                targets = [
+                    os.path.join(localappdata, "D3DSCache"),
+                    os.path.join(localappdata, "NVIDIA Corporation", "NV_Cache"),
+                    os.path.join(localappdata, "AMD", "DxCache"),
+                ]
+                
+                for target in targets:
+                    if os.path.exists(target):
+                        try:
+                            # Calculate size before deletion
+                            size_mb = sum(
+                                os.path.getsize(os.path.join(dirpath, filename))
+                                for dirpath, _, filenames in os.walk(target)
+                                for filename in filenames
+                            ) / (1024 * 1024)
+                            
+                            # Purge
+                            shutil.rmtree(target, ignore_errors=True)
+                            total_freed_mb += size_mb
+                            
+                            self.parent_app.log_to_console(f"[STORAGE] Purged: {target} ({size_mb:.2f} MB)")
+                        except Exception as e:
+                            self.parent_app.log_to_console(f"[STORAGE] [WARNING] Failed to purge {target}: {str(e)}")
+                
+                self.parent_app.log_to_console(f"[STORAGE] [SUCCESS] Shader cache purge complete. Freed: {total_freed_mb:.2f} MB")
+        
+        self.shader_purge_worker = ShaderPurgeWorker(self)
+        self.shader_purge_worker.start()
+    
+    def on_purge_temp_files(self) -> None:
+        """Purge Windows Temp and AppData temp files (async)"""
+        self.log_to_console("[STORAGE] Starting Windows Temp & AppData purge...")
+        
+        from PyQt6.QtCore import QThread
+        import shutil
+        import os
+        
+        class TempPurgeWorker(QThread):
+            def __init__(self, parent_app: "VitreosArchitect") -> None:
+                super().__init__()
+                self.parent_app = parent_app
+            
+            def run(self) -> None:
+                total_freed_mb = 0
+                
+                # Target directories
+                temp = os.environ.get("TEMP", "")
+                win_temp = os.path.join("C:", os.sep, "Windows", "Temp")
+                targets = [temp, win_temp]
+                
+                for target in targets:
+                    if os.path.exists(target):
+                        try:
+                            # Calculate size before deletion
+                            size_mb = 0
+                            for dirpath, _, filenames in os.walk(target):
+                                for filename in filenames:
+                                    try:
+                                        filepath = os.path.join(dirpath, filename)
+                                        size_mb += os.path.getsize(filepath) / (1024 * 1024)
+                                        os.remove(filepath)
+                                    except Exception:
+                                        pass  # Skip locked files
+                            
+                            total_freed_mb += size_mb
+                            self.parent_app.log_to_console(f"[STORAGE] Purged: {target} ({size_mb:.2f} MB)")
+                        except Exception as e:
+                            self.parent_app.log_to_console(f"[STORAGE] [WARNING] Failed to purge {target}: {str(e)}")
+                
+                self.parent_app.log_to_console(f"[STORAGE] [SUCCESS] Temp file purge complete. Freed: {total_freed_mb:.2f} MB")
+        
+        self.temp_purge_worker = TempPurgeWorker(self)
+        self.temp_purge_worker.start()
+    
+
+    def log_to_console(self, message: str) -> None:
+        """Log message to console output terminal"""
+        if hasattr(self, 'console_output'):
+            self.console_output.appendPlainText(message)
+        logger.info(message)
 def main() -> None:
     """Main application entry point"""
     logger.info("Starting Vitreos Architect")
@@ -5290,10 +6095,3 @@ if __name__ == '__main__':
     logger.info("Vitreos - High-End System Sentinel")
     logger.info("=" * 60)
     main()
-
-
-
-
-
-
-
