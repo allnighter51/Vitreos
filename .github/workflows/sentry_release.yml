@@ -1,0 +1,21 @@
+name: Sentry Release
+on:
+  push:
+    branches: [main] # Verify if your branch is 'main' or 'master'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create Sentry release
+        uses: getsentry/action-release@v3 # Using the latest v3 for 2026
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: merc-oj
+          SENTRY_PROJECT: vitreos
+        with:
+          environment: production
