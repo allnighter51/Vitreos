@@ -2,25 +2,30 @@
 Vitreos Shield - Active Threat Mitigation Module
 Ransomware Honeypot & Login Failure Monitoring
 """
-
-import os
-import time
+import subprocess
 import psutil
 import logging
 import threading
 from pathlib import Path
-from typing import Callable, Any
+from typing import Callable, Any, List, Dict, cast
 from datetime import datetime, timedelta
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 
+win32evtlog: Any = None
+win32evtlogutil: Any = None
+win32con: Any = None
+
 try:
-    import win32evtlog
-    import win32evtlogutil
-    import win32con
-    WMI_AVAILABLE = True
+    import win32evtlog as _win32evtlog
+    import win32evtlogutil as _win32evtlogutil
+    import win32con as _win32con
+    win32evtlog = _win32evtlog
+    win32evtlogutil = _win32evtlogutil
+    win32con = _win32con
+    w32_status = True
 except ImportError:
-    WMI_AVAILABLE = False
+    w32_status = False
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +33,11 @@ logger = logging.getLogger(__name__)
 class HoneypotSentinel(FileSystemEventHandler):
     """Monitors honeypot directory for ransomware-like file access patterns."""
     
-    def __init__(self, alert_callback: Callable[[str, str, str, list[dict[str, Any]]], None]):
+    def __init__(self, alert_callback: Callable[[str, str, str, List[Dict[str, Any]]], None]) -> None:
         super().__init__()
         self.alert_callback = alert_callback
         self.honeypot_path = Path(r"C:\Users\Public\Documents\~vitreos_cache")
-        self.observer: Observer | None = None
+        self.observer: Any = None
         self._setup_honeypot()
     
     def _setup_honeypot(self) -> None:
@@ -40,7 +45,6 @@ class HoneypotSentinel(FileSystemEventHandler):
         try:
             self.honeypot_path.mkdir(parents=True, exist_ok=True)
             
-            # Create decoy files
             decoys = [
                 ("passwords.txt", "# Confidential System Credentials\nAdmin: [REDACTED]\n"),
                 ("financial_data.txt", "Account Numbers:\n1234-5678-9012-3456\n"),
@@ -53,8 +57,7 @@ class HoneypotSentinel(FileSystemEventHandler):
                 if not filepath.exists():
                     filepath.write_text(content, encoding="utf-8")
             
-            # Set hidden attribute
-            os.system(f'attrib +h "{self.honeypot_path}"')
+            subprocess.run(['attrib', '+h', str(self.honeypot_path)], capture_output=True)
             logger.info(f"[SHIELD] Honeypot armed at {self.honeypot_path}")
         except Exception as e:
             logger.error(f"[SHIELD] Honeypot setup failed: {e}")
@@ -79,13 +82,13 @@ class HoneypotSentinel(FileSystemEventHandler):
         """Triggered when honeypot file is modified."""
         if event.is_directory:
             return
-        self._handle_breach(event.src_path, "MODIFIED")
+        self._handle_breach(str(event.src_path), "MODIFIED")
     
     def on_deleted(self, event: FileSystemEvent) -> None:
         """Triggered when honeypot file is deleted."""
         if event.is_directory:
             return
-        self._handle_breach(event.src_path, "DELETED")
+        self._handle_breach(str(event.src_path), "DELETED")
     
     def _handle_breach(self, filepath: str, action: str) -> None:
         """Handle honeypot breach - identify and terminate malicious process."""
@@ -93,8 +96,7 @@ class HoneypotSentinel(FileSystemEventHandler):
             filename = Path(filepath).name
             logger.warning(f"[SHIELD] HONEYPOT BREACH: {filename} was {action}")
             
-            # Attempt to identify the process accessing the file
-            culprit_pid: int | None = None
+            culprit_pid: Any = None
             culprit_name = "Unknown"
             
             for proc in psutil.process_iter(['pid', 'name', 'open_files']):
@@ -109,7 +111,6 @@ class HoneypotSentinel(FileSystemEventHandler):
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
             
-            # Terminate the process
             termination_status = "NOT_FOUND"
             if culprit_pid:
                 try:
@@ -121,8 +122,7 @@ class HoneypotSentinel(FileSystemEventHandler):
                     termination_status = f"FAILED: {e}"
                     logger.error(f"[SHIELD] Failed to kill PID {culprit_pid}: {e}")
             
-            # Send alert
-            fields = [
+            fields: List[Dict[str, Any]] = [
                 {"name": "File", "value": filename, "inline": True},
                 {"name": "Action", "value": action, "inline": True},
                 {"name": "Process", "value": culprit_name, "inline": True},
@@ -143,18 +143,18 @@ class HoneypotSentinel(FileSystemEventHandler):
 class LoginSentinel:
     """Monitors Windows Event Log for failed login attempts."""
     
-    def __init__(self, alert_callback: Callable[[str, str, str, list[dict[str, Any]]], None]):
+    def __init__(self, alert_callback: Callable[[str, str, str, List[Dict[str, Any]]], None]) -> None:
         self.alert_callback = alert_callback
         self.failure_threshold = 5
         self.time_window = timedelta(minutes=10)
         self.last_check = datetime.now()
         self.running = False
-        self.thread: threading.Thread | None = None
+        self.thread: Any = None
     
     def start(self) -> None:
         """Start monitoring login failures."""
-        if not WMI_AVAILABLE:
-            logger.warning("[SHIELD] WMI libraries not available, login monitoring disabled")
+        if not w32_status:
+            logger.warning("[SHIELD] Win32 libraries not available, login monitoring disabled")
             return
         
         self.running = True
@@ -175,10 +175,14 @@ class LoginSentinel:
                 self._check_failed_logins()
             except Exception as e:
                 logger.error(f"[SHIELD] Login monitor error: {e}")
-            time.sleep(60)  # Check every minute
+            import time
+            time.sleep(60)
     
     def _check_failed_logins(self) -> None:
-        """Check Windows Security Event Log for Event ID 4625 (failed logins)."""
+        """Check Windows Security Event Log for Event ID 4625."""
+        if not win32evtlog:
+            return
+            
         try:
             hand = win32evtlog.OpenEventLog(None, "Security")
             flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
@@ -188,7 +192,7 @@ class LoginSentinel:
             
             events = win32evtlog.ReadEventLog(hand, flags, 0)
             for event in events:
-                if event.EventID == 4625:  # Failed login
+                if event.EventID == 4625:
                     event_time = event.TimeGenerated
                     if event_time > cutoff_time:
                         failed_attempts += 1
@@ -196,7 +200,7 @@ class LoginSentinel:
             win32evtlog.CloseEventLog(hand)
             
             if failed_attempts >= self.failure_threshold:
-                fields = [
+                fields: List[Dict[str, Any]] = [
                     {"name": "Failed Attempts", "value": str(failed_attempts), "inline": True},
                     {"name": "Time Window", "value": f"{self.time_window.seconds // 60} minutes", "inline": True},
                     {"name": "Threshold", "value": str(self.failure_threshold), "inline": True}
@@ -209,7 +213,6 @@ class LoginSentinel:
                     fields
                 )
                 
-                # Reset check time to avoid spam
                 self.last_check = datetime.now()
         except Exception as e:
             logger.error(f"[SHIELD] Failed login check error: {e}")
@@ -218,7 +221,7 @@ class LoginSentinel:
 class VitreosShield:
     """Coordinator for all active threat mitigation systems."""
     
-    def __init__(self, alert_callback: Callable[[str, str, str, list[dict[str, Any]]], None]):
+    def __init__(self, alert_callback: Callable[[str, str, str, List[Dict[str, Any]]], None]) -> None:
         self.alert_callback = alert_callback
         self.honeypot = HoneypotSentinel(alert_callback)
         self.login_sentinel = LoginSentinel(alert_callback)

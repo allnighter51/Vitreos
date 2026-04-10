@@ -1,0 +1,65 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Vitreos Sentinel",
+  "version": "2.1.0",
+  "identifier": "com.vitreos.sentinel",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    },
+    "longDescription": "High-fidelity PC hardware monitoring dashboard with real-time telemetry and Discord webhook integration.",
+    "shortDescription": "Industrial-grade system sentinel",
+    "externalBin": []
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "VITREOS // SYSTEM SENTINEL",
+        "width": 1280,
+        "height": 800,
+        "resizable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "center": true,
+        "transparent": false,
+        "skipTaskbar": false,
+        "theme": "Dark",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "acceptFirstMouse": true,
+        "tabbingIdentifier": null,
+        "additionalBrowserArgs": "",
+        "url": "index.html",
+        "fileDropEnabled": false,
+        "backgroundColor": "#0D0D0D",
+        "shadow": false,
+        "focus": true,
+        "maximized": false,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ws://localhost:8000; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https:; script-src 'self' 'unsafe-inline'"
+    },
+    "macOSPrivateApi": false
+  },
+  "plugins": {}
+}

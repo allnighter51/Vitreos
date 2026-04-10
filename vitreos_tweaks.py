@@ -90,7 +90,7 @@ class SystemTweaker:
         Returns: (success: bool, message: str)
         """
         try:
-            messages = []
+            messages: list[str] = []
             
             # Stop DiagTrack service
             stop_result = subprocess.run(
@@ -134,7 +134,7 @@ class SystemTweaker:
         Returns: (success: bool, message: str)
         """
         try:
-            messages = []
+            messages: list[str] = []
             
             # Flush DNS
             dns_result = subprocess.run(
@@ -152,7 +152,7 @@ class SystemTweaker:
             import os
             temp_path = os.environ.get("TEMP", "")
             if temp_path:
-                temp_result = subprocess.run(
+                subprocess.run(
                     ["cmd", "/c", f"del /q /f /s {temp_path}\\*"],
                     capture_output=True,
                     text=True,
@@ -161,7 +161,7 @@ class SystemTweaker:
                 messages.append(f"User TEMP cleared")
             
             # Clear C:\Windows\Temp
-            win_temp_result = subprocess.run(
+            subprocess.run(
                 ["cmd", "/c", r"del /q /f /s C:\Windows\Temp\*"],
                 capture_output=True,
                 text=True,
@@ -181,7 +181,7 @@ class SystemTweaker:
         Returns: (success: bool, message: str)
         """
         try:
-            messages = []
+            messages: list[str] = []
             
             # Run SFC scan
             messages.append("Running SFC /scannow (this may take several minutes)...")

@@ -1,18 +1,24 @@
-__pycache__/
-*.py[cod]
-venv/
-build/
-dist/
-*.spec
-mercury_config.json
+# Logs
+logs
 *.log
-# Ignore SQLite databases
-*.db
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Ignore temporary text files
-*.txt
+node_modules
+dist
+dist-ssr
+*.local
 
-# Ignore Python cache
-__pycache__/
-*.py[cod]
-final_sweep.py
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
