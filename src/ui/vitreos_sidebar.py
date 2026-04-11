@@ -472,6 +472,7 @@ class VitreosSidebar(QWidget):
         self._schedule_next_log()
     
     def append_log(self, level: str, message: str, color: str = 'text_dim') -> None:
+        """Append a single log entry (called by 1Hz batch flush)"""
         time_str  = datetime.now().strftime('%H:%M:%S')
         color_hex = VITREOS_COLORS.get(color, VITREOS_COLORS['text_dim'])
         tag_color = _TAG_COLORS.get(level, color_hex)
@@ -489,6 +490,66 @@ class VitreosSidebar(QWidget):
         if self.log_list.count() > 200:
             self.log_list.takeItem(0)
 
+        # Auto-scroll to bottom (smooth, no flicker)
+        vbar = self.log_list.verticalScrollBar()
+        if vbar:
+            vbar.setValue(vbar.maximum())
+    
+    def handle_pulse_log_batch(self, batch_text: str) -> None:
+        """
+        Receives a 1Hz batch of logs from telemetry worker.
+        Format: "color1|line1\ncolor2|line2\n..."
+        
+        This minimizes Qt's setText/append calls and prevents UI lag.
+        """
+        if not batch_text:
+            return
+        
+        # Parse batch (format: "color|[HH:MM:SS] [LEVEL] message")
+        lines = batch_text.split('\n')
+        
+        for line in lines:
+            if '|' not in line:
+                continue
+            
+            color, log_line = line.split('|', 1)
+            
+            # Extract level from log line (format: "[HH:MM:SS] [LEVEL] message")
+            try:
+                parts = log_line.split(']', 2)
+                if len(parts) >= 3:
+                    level = parts[1].strip('[').strip()
+                    message = parts[2].strip()
+                    
+                    # Add to log list (single item, no batch processing overhead)
+                    time_str = datetime.now().strftime('%H:%M:%S')
+                    color_hex = VITREOS_COLORS.get(color, VITREOS_COLORS['text_dim'])
+                    tag_color = _TAG_COLORS.get(level, color_hex)
+                    
+                    item = QListWidgetItem()
+                    item.setData(Qt.ItemDataRole.UserRole, {
+                        'time': time_str,
+                        'level': level,
+                        'msg': message,
+                        'color_hex': tag_color,
+                    })
+                    self.log_list.addItem(item)
+            except Exception as e:
+                # Fallback: add raw line
+                item = QListWidgetItem()
+                item.setData(Qt.ItemDataRole.UserRole, {
+                    'time': datetime.now().strftime('%H:%M:%S'),
+                    'level': 'SYS',
+                    'msg': log_line,
+                    'color_hex': VITREOS_COLORS['text_dim'],
+                })
+                self.log_list.addItem(item)
+        
+        # Trim to 200 entries
+        while self.log_list.count() > 200:
+            self.log_list.takeItem(0)
+        
+        # Auto-scroll to bottom (smooth, no flicker)
         vbar = self.log_list.verticalScrollBar()
         if vbar:
             vbar.setValue(vbar.maximum())

@@ -58,7 +58,8 @@ class SecurityTerminal(QTextEdit):
         
         # Auto-scroll
         scrollbar = self.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        if scrollbar is not None:
+            scrollbar.setValue(scrollbar.maximum())
 
 
 class ThreatLevelGutter(QWidget):

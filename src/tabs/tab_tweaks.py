@@ -159,7 +159,8 @@ class TweaksTab(QWidget):
         
         self.console.append(html)
         scrollbar = self.console.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        if scrollbar is not None:
+            scrollbar.setValue(scrollbar.maximum())
     
     def on_ultimate_performance(self):
         """Enable Ultimate Performance power plan"""

@@ -12,7 +12,8 @@ import random
 from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
 from src.ui.vitreos_widgets import (
     VitreosWinFrame, VitreosSegmentedBar, VitreosVerticalBar,
-    VitreosCircularGauge, VitreosBarcode, HazardBadge, OCBadge
+    VitreosCircularGauge, VitreosBarcode, IconBadge, AlertBanner,
+    ConnectionStatus, HazardBadge, OCBadge, apply_phosphor_glow
 )
 from src.core.vitreos_telemetry import TelemetryWorker
 
@@ -31,7 +32,9 @@ class CpuMonitor(VitreosWinFrame):
             parent=parent
         )
         
-        self.detected_cores = 16
+        # Start with zero cores — UI will build grid on first telemetry packet
+        self.detected_cores = 0
+        self.cpu_detected = False
         self._setup_content()
     
     def _setup_content(self) -> None:
@@ -114,8 +117,8 @@ class CpuMonitor(VitreosWinFrame):
         self.cores_grid.setSpacing(2)  # Reduced by 25% from 3px
         self.core_bars: List[VitreosVerticalBar] = []
         self.core_widgets: List[QWidget] = []
-        
-        self._rebuild_core_grid()
+        self.core_labels: List[QLabel] = []
+        # Do NOT build core grid until telemetry provides coreCount
         
         layout.addLayout(self.cores_grid)
         layout.addStretch()
@@ -128,6 +131,7 @@ class CpuMonitor(VitreosWinFrame):
             widget.deleteLater()
         self.core_bars.clear()
         self.core_widgets.clear()
+        self.core_labels.clear()
         
         cols = 4
         rows = (self.detected_cores + cols - 1) // cols
@@ -150,6 +154,12 @@ class CpuMonitor(VitreosWinFrame):
             core_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
             core_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             core_layout.addWidget(core_label)
+            self.core_labels.append(core_label)
+            # Aesthetic: subtle phosphor glow on each core label to preserve neon vibe
+            try:
+                apply_phosphor_glow(core_label, 'primary_purple', blur_radius=3.0)
+            except Exception:
+                pass
             
             bar = VitreosVerticalBar(segments=7, width=12)
             core_layout.addWidget(bar, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -160,7 +170,20 @@ class CpuMonitor(VitreosWinFrame):
     
     def update_data(self, data: Dict[str, Any]) -> None:
         cpu_name = data.get('name', 'Unknown CPU')
-        if hasattr(self, 'name_label'):
+        
+        # Header state transition: DETECTING → CPU NAME
+        # Transition labels: DETECTING / INITIALIZING -> ACTIVE / RYZEN_CONNECTED
+        if not self.cpu_detected and cpu_name != 'Unknown CPU' and 'Discovering' not in cpu_name:
+            self.cpu_detected = True
+            # Prefer explicit RYZEN_CONNECTED label for AMD Ryzen CPUs
+            if 'ryzen' in cpu_name.lower():
+                self.name_label.setText('RYZEN_CONNECTED')
+            else:
+                self.name_label.setText('ACTIVE')
+            self.name_label.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
+            self.specs_label.setText('ACTIVE')
+        elif self.cpu_detected:
+            # Once detected, show the CPU model as subtitle
             self.name_label.setText(cpu_name.upper())
         
         physical_cores = data.get('physicalCores', 0)
@@ -177,11 +200,17 @@ class CpuMonitor(VitreosWinFrame):
             self.detected_cores = core_count
             self._rebuild_core_grid()
         
-        total_load = data.get('totalLoad', 0)
+        try:
+            total_load = float(data.get('totalLoad', 0) or 0)
+        except Exception:
+            total_load = 0.0
         self.load_value_label.setText(f"{total_load:.0f}%")
         self.load_bar.set_value(total_load, 100)
         
-        temp = data.get('temp', 0)
+        try:
+            temp = float(data.get('temp', 0) or 0)
+        except Exception:
+            temp = 0.0
         self.temp_value_label.setText(f"{temp:.0f}°C")
         self.temp_bar.set_value(temp, 100)
         
@@ -190,10 +219,32 @@ class CpuMonitor(VitreosWinFrame):
         else:
             self.temp_value_label.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
         
-        cores = data.get('cores', [])
+        cores = data.get('cores', []) or []
         for i, bar in enumerate(self.core_bars):
+            val = 0.0
             if i < len(cores):
-                bar.set_value(cores[i], 100)
+                try:
+                    val = float(cores[i] or 0)
+                except Exception:
+                    val = 0.0
+            bar.set_value(val, 100)
+
+            # Aesthetic: apply overload glow when a core exceeds 90%
+            core_widget = self.core_widgets[i]
+            core_label = self.core_labels[i]
+            if val >= 90.0:
+                core_widget.setStyleSheet(f"background: {VITREOS_COLORS['bg_primary']}; border: 1px solid {VITREOS_COLORS['critical_red']};")
+                try:
+                    apply_phosphor_glow(core_label, 'critical_red', blur_radius=6.0)
+                except Exception:
+                    pass
+            else:
+                core_widget.setStyleSheet(f"background: {VITREOS_COLORS['bg_primary']}; border: 1px solid {VITREOS_COLORS['border_secondary']};")
+                # Remove any existing glow
+                try:
+                    core_label.setGraphicsEffect(None)
+                except Exception:
+                    pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -207,10 +258,12 @@ class GpuMonitor(VitreosWinFrame):
         super().__init__(
             title="GPU_MONITOR",
             accent_color="warning_orange",
-            badge="⚠",
+            badge="⚠",  # Warning triangle icon
             badge_color="critical_red",
             parent=parent
         )
+        self.gpu_detected = False
+        self.last_temp = 0
         self._setup_content()
     
     def _setup_content(self) -> None:
@@ -380,8 +433,16 @@ class GpuMonitor(VitreosWinFrame):
     
     def update_data(self, data: Dict[str, Any]) -> None:
         gpu_name = data.get('name', 'NO GPU')
-        display_name = gpu_name.replace('NVIDIA GeForce ', '').replace('GeForce ', '').upper()
-        self.name_label.setText(display_name)
+        
+        # Header state transition: NO GPU DETECTED → GPU NAME
+        if not self.gpu_detected and gpu_name != 'NO GPU' and 'Discovering' not in gpu_name:
+            self.gpu_detected = True
+            display_name = gpu_name.replace('NVIDIA GeForce ', '').replace('GeForce ', '').upper()
+            self.name_label.setText(display_name)
+            self.name_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
+        elif self.gpu_detected:
+            display_name = gpu_name.replace('NVIDIA GeForce ', '').replace('GeForce ', '').upper()
+            self.name_label.setText(display_name)
         
         vram_total = data.get('vramTotal', 12)
         if 'RTX 40' in gpu_name or vram_total >= 24:
@@ -408,6 +469,14 @@ class GpuMonitor(VitreosWinFrame):
         
         temp = data.get('temp', 0)
         self.stat_labels['temp'].setText(f"{temp:.0f} °C")
+        
+        # Update badge based on temperature
+        if temp > 85:
+            self.set_badge("⚠", "critical_red")  # Critical warning
+        elif temp > 75:
+            self.set_badge("⚠", "warning_orange")  # Warning
+        else:
+            self.set_badge(None)  # Remove badge when normal
         
         usage = data.get('usage', 0)
         self.load_value.setText(f"{usage:.0f}%")
@@ -438,6 +507,7 @@ class ThermalCtrl(VitreosWinFrame):
     """Thermal monitoring widget with sensor matrix."""
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(title="THERMAL_CTRL", accent_color="cyan", parent=parent)
+        self.alert_active = False
         self._setup_content()
     
     def _setup_content(self) -> None:
@@ -535,6 +605,15 @@ class ThermalCtrl(VitreosWinFrame):
         else:
             self.status_label.setText("OFFLINE")
             self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+        
+        # Check for high thermal load and add/remove alert banner
+        max_temp = max(cpu_temp, gpu_temp)
+        if max_temp > 85 and not self.alert_active:
+            self.add_alert_banner("⚠ CAUTION: HIGH THERMAL LOAD", "warning_orange")
+            self.alert_active = True
+        elif max_temp <= 85 and self.alert_active:
+            self.remove_alert_banner()
+            self.alert_active = False
         
         self.cpu_temp_label.setText(f"{cpu_temp:.0f}°C")
         self.cpu_temp_bar.set_value(cpu_temp, 100)
@@ -950,6 +1029,8 @@ class NetInterface(VitreosWinFrame):
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(title="NET_INTERFACE", accent_color="green", parent=parent)
+        self.telemetry_worker: Optional[Any] = None  # set by main window after init
+        self.connection_status: Optional[ConnectionStatus] = None
         self._setup_content()
     
     def _setup_content(self) -> None:
@@ -957,11 +1038,22 @@ class NetInterface(VitreosWinFrame):
         layout.setContentsMargins(9, 9, 9, 9)  # Reduced by 25%
         layout.setSpacing(4)  # Reduced by 25%
         
-        # Status header
+        # Status header with connection indicator
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+        
         self.status_label = QLabel("SEARCHING...")
         self.status_label.setFont(get_font('mono', FONT_SIZES['title']))
         self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
-        layout.addWidget(self.status_label)
+        header_row.addWidget(self.status_label)
+        
+        header_row.addStretch()
+        
+        # Connection status indicator
+        self.connection_status = ConnectionStatus("ETH", connected=False)
+        header_row.addWidget(self.connection_status)
+        
+        layout.addLayout(header_row)
         
         # Barcode signal visualizer
         signal_label = QLabel("SIGNAL STRENGTH")
@@ -1048,11 +1140,19 @@ class NetInterface(VitreosWinFrame):
     def update_data(self, data: Dict[str, Any]) -> None:
         primary_nic = data.get('primaryNic', 'Unknown')
         if primary_nic != 'Unknown':
-            self.status_label.setText(f"ONLINE // {primary_nic}")
+            self.status_label.setText(f"NETWORK I/O")
             self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['green']};")
+            
+            # Update connection status
+            if self.connection_status:
+                self.connection_status.set_connected(True)
         else:
             self.status_label.setText("OFFLINE")
             self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+            
+            # Update connection status
+            if self.connection_status:
+                self.connection_status.set_connected(False)
         
         download = data.get('downloadMbps', 0)
         upload = data.get('uploadMbps', 0)

@@ -156,7 +156,11 @@ class ProcessesTab(QWidget):
     
     def on_affinity_lock(self) -> None:
         """Lock selected process to physical cores only (0,2,4,6,8,10,12,14)"""
-        selected_rows = self.proc_table.selectionModel().selectedRows()
+        selection_model = self.proc_table.selectionModel()
+        if selection_model is None:
+            return
+        
+        selected_rows = selection_model.selectedRows()
         if not selected_rows:
             return
         

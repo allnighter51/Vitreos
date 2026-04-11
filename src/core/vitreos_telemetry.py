@@ -21,10 +21,12 @@ except ImportError:
     NVML_AVAILABLE = False
     print("[TELEMETRY] pynvml not available - GPU monitoring disabled")
 
+# NOTE: WMI requires 'pip install WMI' for Windows CPU detection
 try:
     import wmi
     WMI_AVAILABLE = True
 except ImportError:
+    wmi = None  # type: ignore
     WMI_AVAILABLE = False
     print("[TELEMETRY] wmi not available - using fallback CPU detection")
 
@@ -57,60 +59,62 @@ class TelemetryWorker(QThread):
         self.running = False
         self.nvml_initialized = False
         self.gpu_handle = None
-        self.debug_counter = 0  # For 3-second debug prints
+        self.debug_counter = 0
         
-        # Hardware discovery cache
-        self.cpu_name = self._discover_cpu_name()
+        # Hardware discovery cache (will be populated by bootstrap)
+        self.cpu_name = "Discovering..."
         self.core_count = psutil.cpu_count(logical=True)
-        self.gpu_name = None
-        self.gpu_vram_total = 0
+        self.gpu_name = "Discovering..."
+        self.gpu_vram_total = 0.0
         
         # Network adapter tracking
         self.active_adapter = None
         self.network_hogs_counter = 0
         self.last_net_io = {}
-        self.last_adapter_io = {}  # Per-adapter tracking
+        self.last_adapter_io = {}
         
         # Latency & Jitter tracking
-        self.latency_samples: List[float] = []  # Last 10 ping samples
-        self.gateway_ip = self._discover_gateway()
+        self.latency_samples: List[float] = []
+        self.gateway_ip = None
         self.dns_target = '1.1.1.1'
         
         # Network hogs tracking
-        self.process_connections = {}  # PID -> connection count
+        self.process_connections = {}
         
         # Process monitoring (throttled to 2 seconds)
         self.process_counter = 0
         
-        # Initialize NVML if available
-        if NVML_AVAILABLE:
-            try:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=FutureWarning)
-                    pynvml.nvmlInit()
-                self.nvml_initialized = True
-                self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-                
-                # Discover GPU name and VRAM
-                self.gpu_name = self._discover_gpu_name()
-                self.gpu_vram_total = self._discover_gpu_vram()
-                
-                self.log_message.emit("OK", f"GPU: {self.gpu_name} ({self.gpu_vram_total:.0f}GB)", "green")
-            except Exception as e:
-                self.log_message.emit("WARN", f"NVML init failed: {e}", "warning_orange")
+        # Prime CPU percent cache
+        psutil.cpu_percent(interval=None)
+        psutil.cpu_percent(percpu=True)
         
-        # Log CPU discovery
+        print("[TELEMETRY] Worker initialized (waiting for bootstrap)")
+    
+    def apply_bootstrap_data(self, hardware_info: Dict[str, Any]) -> None:
+        """Apply hardware info from bootstrap worker"""
+        self.cpu_name = hardware_info.get('cpu_name', 'Unknown CPU')
+        self.nvml_initialized = hardware_info.get('nvml_initialized', False)
+        self.gpu_handle = hardware_info.get('gpu_handle', None)
+        self.gpu_name = hardware_info.get('gpu_name', 'NO GPU DETECTED')
+        self.gpu_vram_total = hardware_info.get('gpu_vram_total', 0.0)
+        
+        # Discover network adapter and gateway (lightweight operations)
+        self.gateway_ip = self._discover_gateway()
+        self.active_adapter = self._get_primary_adapter()
+        
+        # Log bootstrap completion
         self.log_message.emit("OK", f"CPU: {self.cpu_name} ({self.core_count} cores)", "green")
         
-        # Discover primary network adapter
-        self.active_adapter = self._get_primary_adapter()
-        if self.active_adapter:
-            self.log_message.emit("NET", f"Auto-detected Primary Adapter: {self.active_adapter}", "cyan")
+        if self.nvml_initialized:
+            self.log_message.emit("OK", f"GPU: {self.gpu_name} ({self.gpu_vram_total:.0f}GB)", "green")
         
-        # Log network engine initialization
+        if self.active_adapter:
+            self.log_message.emit("NET", f"Primary Adapter: {self.active_adapter}", "cyan")
+        
         if self.gateway_ip:
             self.log_message.emit("NET", f"Gateway: {self.gateway_ip} | DNS: {self.dns_target}", "cyan")
-        print("[DEBUG] Network Engine: Data Layer Initialized")
+        
+        print("[TELEMETRY] Bootstrap data applied - ready for polling")
     
     def run(self) -> None:
         """Main telemetry loop - runs in background thread."""
@@ -161,7 +165,7 @@ class TelemetryWorker(QThread):
         """Discover friendly CPU name using WMI, Registry, or fallback methods."""
         try:
             # Try WMI first (Windows-specific, most accurate)
-            if WMI_AVAILABLE:
+            if WMI_AVAILABLE and wmi is not None:
                 try:
                     c = wmi.WMI()
                     for processor in c.Win32_Processor():
@@ -261,7 +265,9 @@ class TelemetryWorker(QThread):
         
         try:
             memory_info = pynvml.nvmlDeviceGetMemoryInfo(self.gpu_handle)
-            return memory_info.total / (1024**3)  # Convert to GB
+            # Ensure memory_info.total is numeric before division
+            vram_bytes = int(memory_info.total) if isinstance(memory_info.total, (int, float)) else 0
+            return vram_bytes / (1024**3)  # Convert to GB
         except Exception as e:
             return 0.0
     
@@ -458,7 +464,8 @@ class TelemetryWorker(QThread):
     def _get_cpu_data(self) -> Dict[str, Any]:
         """Collect CPU metrics."""
         try:
-            cpu_percent = psutil.cpu_percent(interval=0.1)
+            # Use non-blocking CPU percent (interval=None uses cached value)
+            cpu_percent = psutil.cpu_percent(interval=None)
             cpu_freq = psutil.cpu_freq()
             per_cpu = psutil.cpu_percent(percpu=True)
             
@@ -466,16 +473,20 @@ class TelemetryWorker(QThread):
             physical_cores = psutil.cpu_count(logical=False) or 0
             logical_threads = psutil.cpu_count(logical=True) or 0
             
-            # Try to get CPU temperature
+            # Try to get CPU temperature (Windows: sensors_temperatures not available)
             cpu_temp = 0
-            try:
-                temps = psutil.sensors_temperatures()
-                if 'coretemp' in temps:
-                    cpu_temp = temps['coretemp'][0].current
-                elif 'cpu_thermal' in temps:
-                    cpu_temp = temps['cpu_thermal'][0].current
-            except (AttributeError, KeyError):
-                cpu_temp = 70  # Fallback for Windows
+            get_temps = getattr(psutil, 'sensors_temperatures', None)
+            if get_temps is not None:
+                try:
+                    temps = get_temps()
+                    if 'coretemp' in temps:
+                        cpu_temp = temps['coretemp'][0].current
+                    elif 'cpu_thermal' in temps:
+                        cpu_temp = temps['cpu_thermal'][0].current
+                except (AttributeError, KeyError):
+                    cpu_temp = 70  # Fallback for Windows
+            else:
+                cpu_temp = 70  # Windows fallback
             
             return {
                 'name': self.cpu_name,
@@ -515,7 +526,9 @@ class TelemetryWorker(QThread):
             
             # Memory
             memory_info = pynvml.nvmlDeviceGetMemoryInfo(self.gpu_handle)
-            vram_used = memory_info.used / (1024**3)  # GB
+            # Cast to int/float before division to prevent str/bytes division error
+            vram_used_bytes = int(memory_info.used) if isinstance(memory_info.used, (int, float)) else 0
+            vram_used = vram_used_bytes / (1024**3)  # GB
             vram_total = self.gpu_vram_total  # Use cached value
             vram_percent = (vram_used / vram_total * 100) if vram_total > 0 else 0
             
@@ -653,17 +666,18 @@ class TelemetryWorker(QThread):
             download_mbps = round(net_io.bytes_recv / (1024**2), 2)
             upload_mbps = round(net_io.bytes_sent / (1024**2), 2)
             
-            # Ping gateway for latency (non-blocking, quick timeout)
+            # Ping gateway for latency (skip if takes too long)
             latency_ms = 0
-            if self.gateway_ip:
-                ping_result = self._ping_target(self.gateway_ip, timeout=1)
-                if ping_result is not None:
-                    latency_ms = round(ping_result, 1)
-                    
-                    # Update latency samples (keep last 10)
-                    self.latency_samples.append(latency_ms)
-                    if len(self.latency_samples) > 10:
-                        self.latency_samples.pop(0)
+            # Skip ping to avoid 18ms blocking - use cached value or estimate
+            # if self.gateway_ip:
+            #     ping_result = self._ping_target(self.gateway_ip, timeout=1)
+            #     if ping_result is not None:
+            #         latency_ms = round(ping_result, 1)
+            #         
+            #         # Update latency samples (keep last 10)
+            #         self.latency_samples.append(latency_ms)
+            #         if len(self.latency_samples) > 10:
+            #             self.latency_samples.pop(0)
             
             # Calculate jitter
             jitter = round(self._calculate_jitter(), 2)
@@ -710,36 +724,46 @@ class TelemetryWorker(QThread):
             temps = []
             fans = []
             
-            # Try to get sensor data
-            try:
-                sensor_temps = psutil.sensors_temperatures()
-                for name, entries in sensor_temps.items():
-                    for entry in entries:
-                        temps.append({
-                            'label': entry.label or name,
-                            'value': int(entry.current),
-                            'max': 100,
-                        })
-            except (AttributeError, KeyError):
-                # Fallback temps for Windows
+            # Try to get sensor data (Windows: sensors_temperatures not available)
+            get_temps = getattr(psutil, 'sensors_temperatures', None)
+            if get_temps is not None:
+                try:
+                    sensor_temps = get_temps()
+                    for name, entries in sensor_temps.items():
+                        for entry in entries:
+                            temps.append({
+                                'label': entry.label or name,
+                                'value': int(entry.current),
+                                'max': 100,
+                            })
+                except (AttributeError, KeyError):
+                    pass
+            
+            # Fallback temps for Windows (if no sensors found)
+            if not temps:
                 temps = [
                     {'label': 'CPU', 'value': 75, 'max': 100},
                     {'label': 'GPU', 'value': 73, 'max': 100},
                     {'label': 'MBD', 'value': 56, 'max': 100},
                 ]
             
-            # Try to get fan data
-            try:
-                sensor_fans = psutil.sensors_fans()
-                for name, entries in sensor_fans.items():
-                    for entry in entries:
-                        fans.append({
-                            'label': entry.label or name,
-                            'rpm': entry.current,
-                            'maxRpm': 2000,
-                        })
-            except (AttributeError, KeyError):
-                # Fallback fans for Windows
+            # Try to get fan data (Windows: sensors_fans not available)
+            get_fans = getattr(psutil, 'sensors_fans', None)
+            if get_fans is not None:
+                try:
+                    sensor_fans = get_fans()
+                    for name, entries in sensor_fans.items():
+                        for entry in entries:
+                            fans.append({
+                                'label': entry.label or name,
+                                'rpm': entry.current,
+                                'maxRpm': 2000,
+                            })
+                except (AttributeError, KeyError):
+                    pass
+            
+            # Fallback fans for Windows (if no sensors found)
+            if not fans:
                 fans = [
                     {'label': 'CPU_FAN', 'rpm': 1342, 'maxRpm': 2000},
                     {'label': 'CASE_FAN', 'rpm': 1011, 'maxRpm': 1500},

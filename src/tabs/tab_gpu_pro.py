@@ -6,7 +6,7 @@ GPU Pro Tab - Overclocker's Hub
 from typing import Optional, Dict, Any
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor, QPen
+from PyQt6.QtGui import QPainter, QColor, QPen, QMouseEvent
 
 from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
 from src.ui.vitreos_widgets import VitreosWinFrame, VitreosBarcode, HazardBadge
@@ -31,8 +31,10 @@ class NeonSlider(QWidget):
         self.update()
         self.valueChanged.emit(self.value)
     
-    def mousePressEvent(self, event) -> None:
-        self._update_from_mouse(event.pos().x())
+    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
+        if a0 is None:
+            return
+        self._update_from_mouse(a0.pos().x())
     
     def mouseMoveEvent(self, event) -> None:
         if event.buttons() & Qt.MouseButton.LeftButton:
@@ -221,7 +223,8 @@ class GPUProTab(QWidget):
         """)
         apply_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
         apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        apply_btn.mousePressEvent = lambda e: self._apply_settings()
+        # Use `a0` parameter name to match PyQt6 stub signature for mousePressEvent
+        apply_btn.mousePressEvent = lambda a0: self._apply_settings()
         left_layout.addWidget(apply_btn)
         
         # Status

@@ -1,344 +1,262 @@
-#!/usr/bin/env python3
 """
-Vitreos Settings Tab - Application Configuration
+Vitreos Settings Tab - Performance Tuning
+Includes polling rate slider for dynamic hardware monitoring frequency
 """
-from typing import Dict, Any, Optional
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QSlider, QCheckBox, QPushButton, QFrame)
+
+from typing import Optional
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QGroupBox, QPushButton
+)
 from PyQt6.QtCore import Qt, pyqtSignal
+
+from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
+from src.ui.vitreos_widgets import VitreosWinFrame
 
 
 class SettingsTab(QWidget):
-    """Application settings and configuration"""
+    """
+    Settings tab with performance tuning controls.
     
-    polling_interval_changed = pyqtSignal(int)
-    theme_changed = pyqtSignal(int)
-    startup_toggled = pyqtSignal(bool)
-    database_clear_requested = pyqtSignal()
-    database_export_requested = pyqtSignal()
+    Features:
+    - Polling rate slider (8-100ms)
+    - UI refresh rate display
+    - Performance presets
+    """
     
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    # Signals
+    polling_rate_changed = pyqtSignal(int)  # Hardware polling rate (ms)
+    ui_refresh_rate_changed = pyqtSignal(int)  # UI refresh rate (ms)
+    
+    def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setup_ui()
+        self._setup_ui()
     
-    def setup_ui(self) -> None:
-        """Initialize the settings layout"""
+    def _setup_ui(self) -> None:
+        """Build settings interface"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
         
-        # Header
-        header_label = QLabel("⚙️ Settings")
-        header_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 16px;
-            font-weight: bold;
-            color: #bc13fe;
-        """)
-        layout.addWidget(header_label)
+        # Title
+        title_label = QLabel("SYSTEM SETTINGS")
+        title_label.setFont(get_font('mono', FONT_SIZES['title']))
+        title_label.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
+        layout.addWidget(title_label)
         
-        # Performance settings
-        perf_frame = QFrame()
-        perf_frame.setStyleSheet("""
-            QFrame {
-                background: rgba(12, 12, 15, 0.95);
-                border: 2px solid rgba(188, 19, 254, 0.5);
-                border-radius: 8px;
-                padding: 15px;
-            }
-        """)
-        perf_layout = QVBoxLayout(perf_frame)
+        # Performance Tuning Group
+        perf_group = self._create_performance_group()
+        layout.addWidget(perf_group)
         
-        perf_label = QLabel("⚡ Performance")
-        perf_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 14px;
-            font-weight: bold;
-            color: #00f2ff;
-        """)
-        perf_layout.addWidget(perf_label)
-        
-        # Heartbeat regulator
-        heartbeat_layout = QHBoxLayout()
-        
-        heartbeat_label = QLabel("Heartbeat Regulator:")
-        heartbeat_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 11px;
-            color: #888;
-        """)
-        
-        self.heartbeat_slider = QSlider(Qt.Orientation.Horizontal)
-        self.heartbeat_slider.setMinimum(100)
-        self.heartbeat_slider.setMaximum(5000)
-        self.heartbeat_slider.setValue(1000)
-        self.heartbeat_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                background: rgba(12, 12, 15, 0.95);
-                border: 2px solid rgba(188, 19, 254, 0.5);
-                height: 8px;
-                border-radius: 4px;
-            }
-            QSlider::handle:horizontal {
-                background: #bc13fe;
-                border: 2px solid #00f2ff;
-                width: 18px;
-                margin: -5px 0;
-                border-radius: 9px;
-            }
-            QSlider::sub-page:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #bc13fe, stop:1 #00f2ff);
-                border-radius: 4px;
-            }
-        """)
-        self.heartbeat_slider.valueChanged.connect(self.on_heartbeat_changed)  # type: ignore
-        
-        self.heartbeat_value_label = QLabel("1000 ms")
-        self.heartbeat_value_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 11px;
-            font-weight: bold;
-            color: #00f2ff;
-            min-width: 70px;
-        """)
-        
-        heartbeat_layout.addWidget(heartbeat_label)
-        heartbeat_layout.addWidget(self.heartbeat_slider)
-        heartbeat_layout.addWidget(self.heartbeat_value_label)
-        
-        perf_layout.addLayout(heartbeat_layout)
-        
-        layout.addWidget(perf_frame)
-        
-        # Appearance settings
-        appearance_frame = QFrame()
-        appearance_frame.setStyleSheet("""
-            QFrame {
-                background: rgba(12, 12, 15, 0.95);
-                border: 2px solid rgba(188, 19, 254, 0.5);
-                border-radius: 8px;
-                padding: 15px;
-            }
-        """)
-        appearance_layout = QVBoxLayout(appearance_frame)
-        
-        appearance_label = QLabel("🎨 Appearance")
-        appearance_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 14px;
-            font-weight: bold;
-            color: #00f2ff;
-        """)
-        appearance_layout.addWidget(appearance_label)
-        
-        # Theme hue slider
-        theme_layout = QHBoxLayout()
-        
-        theme_label = QLabel("Theme Hue:")
-        theme_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 11px;
-            color: #888;
-        """)
-        
-        self.theme_slider = QSlider(Qt.Orientation.Horizontal)
-        self.theme_slider.setMinimum(0)
-        self.theme_slider.setMaximum(360)
-        self.theme_slider.setValue(280)  # Default purple hue
-        self.theme_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                background: rgba(12, 12, 15, 0.95);
-                border: 2px solid rgba(188, 19, 254, 0.5);
-                height: 8px;
-                border-radius: 4px;
-            }
-            QSlider::handle:horizontal {
-                background: #bc13fe;
-                border: 2px solid #00f2ff;
-                width: 18px;
-                margin: -5px 0;
-                border-radius: 9px;
-            }
-            QSlider::sub-page:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #bc13fe, stop:1 #00f2ff);
-                border-radius: 4px;
-            }
-        """)
-        self.theme_slider.valueChanged.connect(self.on_theme_changed)  # type: ignore
-        
-        self.theme_value_label = QLabel("280°")
-        self.theme_value_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 11px;
-            font-weight: bold;
-            color: #00f2ff;
-            min-width: 50px;
-        """)
-        
-        theme_layout.addWidget(theme_label)
-        theme_layout.addWidget(self.theme_slider)
-        theme_layout.addWidget(self.theme_value_label)
-        
-        appearance_layout.addLayout(theme_layout)
-        
-        layout.addWidget(appearance_frame)
-        
-        # System settings
-        system_frame = QFrame()
-        system_frame.setStyleSheet("""
-            QFrame {
-                background: rgba(12, 12, 15, 0.95);
-                border: 2px solid rgba(188, 19, 254, 0.5);
-                border-radius: 8px;
-                padding: 15px;
-            }
-        """)
-        system_layout = QVBoxLayout(system_frame)
-        
-        system_label = QLabel("💻 System")
-        system_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 14px;
-            font-weight: bold;
-            color: #00f2ff;
-        """)
-        system_layout.addWidget(system_label)
-        
-        checkbox_style = """
-            QCheckBox {
-                font-family: 'Consolas';
-                font-size: 11px;
-                color: #00f2ff;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border: 2px solid #bc13fe;
-                border-radius: 3px;
-                background: rgba(12, 12, 15, 0.95);
-            }
-            QCheckBox::indicator:checked {
-                background: #bc13fe;
-            }
-        """
-        
-        self.startup_check = QCheckBox("Launch on Windows Startup")
-        self.startup_check.setStyleSheet(checkbox_style)
-        self.startup_check.stateChanged.connect(self.on_startup_toggled)  # type: ignore
-        
-        self.tray_check = QCheckBox("Minimize to System Tray")
-        self.tray_check.setStyleSheet(checkbox_style)
-        
-        system_layout.addWidget(self.startup_check)
-        system_layout.addWidget(self.tray_check)
-        
-        layout.addWidget(system_frame)
-        
-        # Database maintenance
-        db_frame = QFrame()
-        db_frame.setStyleSheet("""
-            QFrame {
-                background: rgba(12, 12, 15, 0.95);
-                border: 2px solid rgba(188, 19, 254, 0.5);
-                border-radius: 8px;
-                padding: 15px;
-            }
-        """)
-        db_layout = QVBoxLayout(db_frame)
-        
-        db_label = QLabel("🗄️ Database Maintenance")
-        db_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 14px;
-            font-weight: bold;
-            color: #00f2ff;
-        """)
-        db_layout.addWidget(db_label)
-        
-        db_button_layout = QHBoxLayout()
-        
-        self.db_clear_btn = QPushButton("🧹 Clear Database")
-        self.db_clear_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(255, 0, 0, 0.3);
-                border: 2px solid #ff8c00;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-family: 'Consolas';
-                font-size: 11px;
-                font-weight: bold;
-                color: #ffffff;
-            }
-            QPushButton:hover {
-                background: rgba(255, 0, 0, 0.5);
-            }
-        """)
-        self.db_clear_btn.clicked.connect(self.on_db_clear)  # type: ignore
-        
-        self.db_export_btn = QPushButton("📤 Export Database")
-        self.db_export_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(188, 19, 254, 0.3);
-                border: 2px solid #bc13fe;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-family: 'Consolas';
-                font-size: 11px;
-                font-weight: bold;
-                color: #ffffff;
-            }
-            QPushButton:hover {
-                background: rgba(188, 19, 254, 0.5);
-            }
-        """)
-        self.db_export_btn.clicked.connect(self.on_db_export)  # type: ignore
-        
-        db_button_layout.addWidget(self.db_clear_btn)
-        db_button_layout.addWidget(self.db_export_btn)
-        db_button_layout.addStretch()
-        
-        db_layout.addLayout(db_button_layout)
-        
-        layout.addWidget(db_frame)
+        # UI Settings Group
+        ui_group = self._create_ui_group()
+        layout.addWidget(ui_group)
         
         layout.addStretch()
     
-    def on_heartbeat_changed(self, value: int) -> None:
-        """Handle heartbeat slider change"""
-        self.heartbeat_value_label.setText(f"{value} ms")
-        self.polling_interval_changed.emit(value)  # type: ignore
-    
-    def on_theme_changed(self, value: int) -> None:
-        """Handle theme slider change"""
-        self.theme_value_label.setText(f"{value}°")
-        self.theme_changed.emit(value)  # type: ignore
-    
-    def on_startup_toggled(self, state: int) -> None:
-        """Handle startup checkbox toggle"""
-        self.startup_toggled.emit(state == Qt.CheckState.Checked.value)  # type: ignore
-    
-    def on_db_clear(self) -> None:
-        """Handle database clear button click"""
-        self.database_clear_requested.emit()  # type: ignore
-    
-    def on_db_export(self) -> None:
-        """Handle database export button click"""
-        self.database_export_requested.emit()  # type: ignore
-    
-    def load_current_settings(self, settings_dict: Dict[str, Any]) -> None:
-        """Load current settings into UI"""
-        if 'polling_interval' in settings_dict:
-            self.heartbeat_slider.setValue(settings_dict['polling_interval'])
+    def _create_performance_group(self) -> QGroupBox:
+        """Create performance tuning controls"""
+        group = QGroupBox("PERFORMANCE TUNING")
+        group.setFont(get_font('mono', FONT_SIZES['value_medium']))
+        group.setStyleSheet(f"""
+            QGroupBox {{
+                color: {VITREOS_COLORS['text_secondary']};
+                border: 1px solid {VITREOS_COLORS['border_primary']};
+                border-radius: 0px;
+                margin-top: 12px;
+                padding-top: 12px;
+                background: {VITREOS_COLORS['bg_card']};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 6px;
+                color: {VITREOS_COLORS['primary_purple']};
+            }}
+        """)
         
-        if 'theme_hue' in settings_dict:
-            self.theme_slider.setValue(settings_dict['theme_hue'])
+        layout = QVBoxLayout(group)
+        layout.setSpacing(12)
         
-        if 'startup' in settings_dict:
-            self.startup_check.setChecked(settings_dict['startup'])
+        # Polling Rate Slider
+        slider_label = QLabel("HARDWARE POLLING RATE")
+        slider_label.setFont(get_font('mono', FONT_SIZES['small']))
+        slider_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        layout.addWidget(slider_label)
         
-        if 'minimize_to_tray' in settings_dict:
-            self.tray_check.setChecked(settings_dict['minimize_to_tray'])
+        # Slider with value display
+        slider_row = QHBoxLayout()
+        
+        self.polling_slider = QSlider(Qt.Orientation.Horizontal)
+        self.polling_slider.setMinimum(100)
+        self.polling_slider.setMaximum(5000)
+        self.polling_slider.setValue(1000)  # Default 1Hz
+        self.polling_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.polling_slider.setTickInterval(500)
+        self.polling_slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                border: 1px solid {VITREOS_COLORS['border_primary']};
+                height: 6px;
+                background: {VITREOS_COLORS['bg_primary']};
+            }}
+            QSlider::handle:horizontal {{
+                background: {VITREOS_COLORS['primary_purple']};
+                border: 1px solid {VITREOS_COLORS['purple_glow']};
+                width: 16px;
+                margin: -6px 0;
+            }}
+            QSlider::handle:horizontal:hover {{
+                background: {VITREOS_COLORS['purple_glow']};
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {VITREOS_COLORS['primary_purple']};
+            }}
+        """)
+        self.polling_slider.valueChanged.connect(self._on_polling_slider_changed)
+        slider_row.addWidget(self.polling_slider, 1)
+        
+        # Current value display
+        self.polling_value_label = QLabel("1000ms (1.0 FPS)")
+        self.polling_value_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
+        self.polling_value_label.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
+        self.polling_value_label.setMinimumWidth(140)
+        self.polling_value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        slider_row.addWidget(self.polling_value_label)
+        
+        layout.addLayout(slider_row)
+        
+        # Preset buttons
+        presets_label = QLabel("PRESETS")
+        presets_label.setFont(get_font('mono', FONT_SIZES['tiny']))
+        presets_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+        layout.addWidget(presets_label)
+        
+        presets_row = QHBoxLayout()
+        presets_row.setSpacing(8)
+        
+        presets = [
+            ("FAST", 100, "10 FPS - High performance"),
+            ("MED", 1000, "1 FPS - Balanced"),
+            ("SLOW", 3000, "0.3 FPS - Power saving"),
+            ("MIN", 5000, "0.2 FPS - Minimal overhead"),
+        ]
+        
+        for label, value, tooltip in presets:
+            btn = QPushButton(label)
+            btn.setFont(get_font('mono', FONT_SIZES['tiny']))
+            btn.setFixedHeight(28)
+            btn.setToolTip(tooltip)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {VITREOS_COLORS['bg_primary']};
+                    border: 1px solid {VITREOS_COLORS['border_primary']};
+                    color: {VITREOS_COLORS['text_secondary']};
+                    padding: 4px 12px;
+                }}
+                QPushButton:hover {{
+                    background: {VITREOS_COLORS['bg_card']};
+                    border: 1px solid {VITREOS_COLORS['primary_purple']};
+                    color: {VITREOS_COLORS['primary_purple']};
+                }}
+                QPushButton:pressed {{
+                    background: {VITREOS_COLORS['primary_purple']};
+                    color: {VITREOS_COLORS['text_primary']};
+                }}
+            """)
+            btn.clicked.connect(lambda checked, v=value: self.polling_slider.setValue(v))
+            presets_row.addWidget(btn)
+        
+        layout.addLayout(presets_row)
+        
+        # Info text
+        info_label = QLabel(
+            "Lower values = more frequent updates but higher CPU usage.\n"
+            "Higher values = slower updates but lower CPU usage.\n"
+            "UI refresh rate is synchronized with hardware polling."
+        )
+        info_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        info_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        return group
+    
+    def _create_ui_group(self) -> QGroupBox:
+        """Create UI settings controls"""
+        group = QGroupBox("UI SETTINGS")
+        group.setFont(get_font('mono', FONT_SIZES['value_medium']))
+        group.setStyleSheet(f"""
+            QGroupBox {{
+                color: {VITREOS_COLORS['text_secondary']};
+                border: 1px solid {VITREOS_COLORS['border_primary']};
+                border-radius: 0px;
+                margin-top: 12px;
+                padding-top: 12px;
+                background: {VITREOS_COLORS['bg_card']};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 6px;
+                color: {VITREOS_COLORS['cyan']};
+            }}
+        """)
+        
+        layout = QVBoxLayout(group)
+        layout.setSpacing(8)
+        
+        # UI refresh rate (synchronized with hardware polling)
+        refresh_row = QHBoxLayout()
+        refresh_label = QLabel("UI REFRESH RATE")
+        refresh_label.setFont(get_font('mono', FONT_SIZES['small']))
+        refresh_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        refresh_row.addWidget(refresh_label)
+        refresh_row.addStretch()
+        
+        self.refresh_value_label = QLabel("1.0 FPS (Synced)")
+        self.refresh_value_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
+        self.refresh_value_label.setStyleSheet(f"color: {VITREOS_COLORS['green']};")
+        refresh_row.addWidget(self.refresh_value_label)
+        
+        layout.addLayout(refresh_row)
+        
+        # Info text
+        info_label = QLabel(
+            "UI updates are synchronized with hardware polling.\n"
+            "Both update at the same rate for maximum efficiency."
+        )
+        info_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        info_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        return group
+    
+    def _on_polling_slider_changed(self, value: int) -> None:
+        """Handle polling rate slider changes"""
+        fps = 1000.0 / value
+        self.polling_value_label.setText(f"{value}ms ({fps:.1f} FPS)")
+        
+        # Update UI refresh rate label (synchronized)
+        self.refresh_value_label.setText(f"{fps:.1f} FPS (Synced)")
+        
+        # Emit signals to update hardware polling and UI refresh
+        self.polling_rate_changed.emit(value)
+        self.ui_refresh_rate_changed.emit(value)
+        
+        # Color-code based on performance impact
+        if value <= 500:
+            color = VITREOS_COLORS['warning_orange']  # High performance
+        elif value <= 2000:
+            color = VITREOS_COLORS['cyan']  # Balanced
+        else:
+            color = VITREOS_COLORS['green']  # Power saving
+        
+        self.polling_value_label.setStyleSheet(f"color: {color};")
+        self.refresh_value_label.setStyleSheet(f"color: {color};")
+    
+    def set_polling_rate(self, value: int) -> None:
+        """Set polling rate programmatically"""
+        self.polling_slider.setValue(value)
 
 
+__all__ = ['SettingsTab']

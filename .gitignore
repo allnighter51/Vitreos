@@ -23,3 +23,5 @@ Thumbs.db
 build/
 dist/
 *.spec
+config/mercury_config.json.bak.20260410210230
+config/cline_mcp_settings.json

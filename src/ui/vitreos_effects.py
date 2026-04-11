@@ -3,11 +3,16 @@ CRT Post-Processing Overlay
 Optimized Scanlines and Film Grain for Solid State Y2K Aesthetic
 """
 
-from typing import Optional
-from PyQt6.QtWidgets import QWidget
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap
+from collections import deque
+from typing import Optional, Deque, Tuple
+from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QEvent
+
+from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QBrush, QPolygon, QCursor, QPainterPath
+from src.ui.vitreos_theme import VITREOS_COLORS
+
 import random
+import time
 
 
 class CRTOverlay(QWidget):
@@ -159,3 +164,4 @@ class GlitchTransition(QWidget):
 
 
 __all__ = ['CRTOverlay', 'GlitchTransition']
+

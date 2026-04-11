@@ -1,3 +1,12 @@
+"""Theme methods for Vitreos settings tab"""
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+class ThemeMethods:
+    """Mixin class for theme-related methods"""
+    
     def on_theme_slider_changed(self, value: int) -> None:
         """Handle theme color slider changes"""
         self.theme_label.setText(f"[ACCENT_HUE: {value}°]")
@@ -18,5 +27,3 @@
             self.update_console(f"[SYS] Theme color updated to hue {hue_value}°")
         except Exception as e:
             logger.error(f"Failed to update theme: {e}")
-
-

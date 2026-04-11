@@ -1,0 +1,23 @@
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Python
+*.pyc
+__pycache__/
+*.so
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Maturin
+.maturin/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

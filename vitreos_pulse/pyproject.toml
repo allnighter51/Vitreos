@@ -1,0 +1,29 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "vitreos-pulse"
+version = "1.0.0"
+description = "High-performance hardware telemetry engine for Vitreos"
+authors = [
+    {name = "Vitreos Team", email = "dev@vitreos.io"}
+]
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Operating System :: Microsoft :: Windows",
+]
+
+[tool.maturin]
+python-source = "python"
+module-name = "vitreos_pulse"
+strip = true
+features = ["pyo3/extension-module"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-benchmark>=4.0",
+]

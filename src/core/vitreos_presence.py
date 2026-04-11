@@ -8,10 +8,11 @@ from typing import Dict, Any, Optional
 from PyQt6.QtCore import QThread, pyqtSignal
 
 try:
-    from pypresence import Presence
+    from pypresence.presence import Presence
     PYPRESENCE_AVAILABLE = True
 except ImportError:
     PYPRESENCE_AVAILABLE = False
+    Presence = None  # type: ignore
     print("[PRESENCE] pypresence not available - Discord Rich Presence disabled")
 
 
@@ -44,26 +45,26 @@ class PresenceWorker(QThread):
         self.cpu_temp = 0
         self.vram_used = 0.0
         self.vram_total = 12.0
+        
+        print("[PRESENCE] Worker initialized (connection deferred)")
+    
+    def apply_rpc_connection(self, rpc_object: Presence) -> None:
+        """Apply RPC connection from bootstrap worker"""
+        self.rpc = rpc_object
+        self.connected = True
+        print("[PRESENCE] RPC connection applied - ready for updates")
     
     def run(self) -> None:
-        """Main presence update loop"""
+        """Main presence update loop (connection already established)"""
         if not PYPRESENCE_AVAILABLE:
             self.error_occurred.emit("pypresence not installed")
             return
         
-        self.running = True
-        
-        # Initialize RPC connection
-        try:
-            self.rpc = Presence(self.client_id)
-            self.rpc.connect()
-            self.connected = True
-            self.status_changed.emit(True)
-            print("[PRESENCE] Connected to Discord")
-        except Exception as e:
-            self.error_occurred.emit(f"Connection failed: {e}")
-            self.running = False
+        if not self.connected or not self.rpc:
+            self.error_occurred.emit("RPC not connected")
             return
+        
+        self.running = True
         
         # Update loop (every 15 seconds)
         while self.running:
