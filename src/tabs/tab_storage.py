@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
                              QLabel, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView)
 from PyQt6.QtCore import Qt, pyqtSignal
-from src.vitreos_core_ui import LiquidGlassCard
+from src.ui.vitreos_core_ui import LiquidGlassCard
 
 
 class StorageTab(QWidget):
@@ -192,3 +192,5 @@ class StorageTab(QWidget):
         self.write_ops_card.set_value(f"{io_stats.get('write_ops', 0)}")
         self.read_speed_card.set_value(f"{io_stats.get('read_speed_mbps', 0):.2f} MB/s")
         self.write_speed_card.set_value(f"{io_stats.get('write_speed_mbps', 0):.2f} MB/s")
+
+

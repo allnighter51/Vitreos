@@ -9,8 +9,8 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QComboBox, QGridLayout, QSizePolicy, QScrollArea)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPainter, QPen, QColor
-from src.vitreos_widgets import VitreosWinFrame
-from src.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
+from src.ui.vitreos_widgets import VitreosWinFrame, clear_layout
+from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
 
 
 class NetworkTab(QWidget):
@@ -338,12 +338,9 @@ class NetworkTab(QWidget):
     
     def update_bandwidth_hogs(self, hogs: List[Dict[str, Any]]) -> None:
         """Update network hogs list (top 5)"""
-        # Clear existing entries
-        while self.hogs_layout.count() > 0:
-            item = self.hogs_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        
+        # Safely clear existing entries
+        clear_layout(self.hogs_layout)
+
         # Add new entries (limit to 5)
         for hog in hogs[:5]:
             name = hog.get('name', 'Unknown')
@@ -408,3 +405,5 @@ class BandwidthWaveform(QWidget):
             x2 = int(i * width / 60)
             y2 = int(height - (self.upload_data[i] / max_val * height))
             painter.drawLine(x1, y1, x2, y2)
+
+

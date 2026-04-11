@@ -12,9 +12,9 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QPainter, QBrush
 
 try:
-    from src.vitreos_theme import VITREOS_COLORS, get_font
+    from src.ui.vitreos_theme import VITREOS_COLORS, get_font
 except ImportError:
-    from vitreos_theme import VITREOS_COLORS, get_font
+    from src.ui.vitreos_theme import VITREOS_COLORS, get_font
 
 
 class TPIBar(QWidget):
@@ -280,3 +280,5 @@ class ProcessesTab(QWidget):
             
             # Set row height
             self.proc_table.setRowHeight(row, 20)
+
+

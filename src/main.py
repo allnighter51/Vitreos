@@ -11,12 +11,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QMouseEvent
 
-from src.vitreos_theme import VITREOS_COLORS, VITREOS_STYLESHEET, initialize_theme, get_font, FONT_SIZES
-from src.vitreos_widgets import SystemPulseLog, VitreosWinFrame
-from src.vitreos_telemetry import TelemetryWorker
-from src.vitreos_presence import PresenceWorker
-from src.vitreos_bridge import translate_to_legacy_format
-from src.vitreos_modules import (
+from src.ui.vitreos_theme import VITREOS_COLORS, VITREOS_STYLESHEET, initialize_theme, get_font, FONT_SIZES
+from src.ui.vitreos_widgets import SystemPulseLog, VitreosWinFrame
+from src.core.vitreos_telemetry import TelemetryWorker
+from src.core.vitreos_presence import PresenceWorker
+from src.core.vitreos_bridge import translate_to_legacy_format
+from src.ui.vitreos_modules import (
     CpuMonitor, GpuMonitor, ThermalCtrl, StorageArray, MemoryArray, NetInterface
 )
 
@@ -437,32 +437,26 @@ class VitreosMainWindow(QMainWindow):
         print("[VITREOS] Presence worker initialized (disabled)")
     
     def _load_verbose_mode(self) -> None:
-        """Load verbose mode state from config/settings.json."""
+        """Load verbose mode state from the root config package safely."""
         try:
-            import json
-            with open('config/settings.json', 'r') as f:
-                settings = json.load(f)
-                self.verbose_mode = settings.get('monitoring', {}).get('verbose_mode', False)
-                if self.verbose_mode:
-                    print("[VITREOS] Verbose Mode loaded: ENABLED")
+            from config.settings import load_settings
+            settings = load_settings()
+            self.verbose_mode = settings.get('monitoring', {}).get('verbose_mode', False)
+            if self.verbose_mode:
+                print("[VITREOS] Verbose Mode loaded: ENABLED")
         except Exception as e:
             print(f"[VITREOS] Could not load verbose mode: {e}")
             self.verbose_mode = False
     
     def _save_verbose_mode(self) -> None:
-        """Save verbose mode state to config/settings.json."""
+        """Save verbose mode state via the root config package."""
         try:
-            import json
-            with open('config/settings.json', 'r') as f:
-                settings = json.load(f)
-            
+            from config.settings import load_settings, save_settings
+            settings = load_settings()
             if 'monitoring' not in settings:
                 settings['monitoring'] = {}
             settings['monitoring']['verbose_mode'] = self.verbose_mode
-            
-            with open('config/settings.json', 'w') as f:
-                json.dump(settings, f, indent=2)
-            
+            save_settings(settings)
             print(f"[VITREOS] Verbose Mode saved: {'ENABLED' if self.verbose_mode else 'DISABLED'}")
         except Exception as e:
             print(f"[VITREOS] Could not save verbose mode: {e}")
@@ -927,3 +921,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

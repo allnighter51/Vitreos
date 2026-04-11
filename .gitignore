@@ -25,6 +25,6 @@ dist-ssr
 
 # Python / runtime
 /venv/
-/data/*.db
+**/vitreos_history.db
 __pycache__/
 .pytest_cache/

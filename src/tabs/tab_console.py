@@ -107,7 +107,7 @@ class ConsoleTab(QWidget):
     def load_historical_logs(self) -> None:
         """Load last 50 historical logs from database (migrated from Logbook)"""
         try:
-            from src.vitreos_db import VitreosDB
+            from src.core.vitreos_db import VitreosDB
             
             # Create temporary database connection to query logs
             db = VitreosDB()
@@ -239,3 +239,5 @@ class ConsoleTab(QWidget):
         )
         
         self.write_console(raw_packet, "TELEMETRY")
+
+

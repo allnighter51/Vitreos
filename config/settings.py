@@ -57,3 +57,5 @@ def save_settings(settings: Dict[str, Any]) -> bool:
     except Exception as e:
         print(f"Error saving settings: {e}")
         return False
+
+

@@ -18,3 +18,5 @@
             self.update_console(f"[SYS] Theme color updated to hue {hue_value}°")
         except Exception as e:
             logger.error(f"Failed to update theme: {e}")
+
+

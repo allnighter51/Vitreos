@@ -340,3 +340,5 @@ class SettingsTab(QWidget):
         
         if 'minimize_to_tray' in settings_dict:
             self.tray_check.setChecked(settings_dict['minimize_to_tray'])
+
+

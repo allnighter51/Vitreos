@@ -1,6 +1,8 @@
 
 import sqlite3
 import logging
+import os
+from pathlib import Path
 from typing import Dict, Any, TypedDict, List, Tuple
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot  # type: ignore[reportUnknownVariableType]
 
@@ -69,6 +71,20 @@ class VitreosDB:
         Initializes the database, creates the necessary tables, and starts the
         background worker thread for handling database operations.
         """
+        # Resolve relative paths against the project root (two levels above this file)
+        # Ensure the DB ends up under the repository-level `data/` directory.
+        if not os.path.isabs(db_path):
+            project_root = Path(__file__).resolve().parents[2]
+            db_path_obj = Path(db_path)
+            # If caller already provided a path starting with 'data/', respect it.
+            if len(db_path_obj.parts) > 0 and db_path_obj.parts[0] == 'data':
+                db_path = str(project_root / db_path_obj)
+            else:
+                db_path = str(project_root / 'data' / db_path_obj)
+
+        # Ensure parent directory exists (e.g., data/)
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        
         # Use check_same_thread=False to allow the connection to be used
         # by the background worker thread.
         self.connection: sqlite3.Connection = sqlite3.connect(db_path, check_same_thread=False)
@@ -182,6 +198,43 @@ class VitreosDB:
         except Exception as e:
             logger.error(f"Failed to delete process rule: {e}")
 
+    def get_recent_logs(self, limit: int = 50) -> List[HardwareLogRow]:
+        """
+        Retrieve the most recent hardware log entries from the database.
+        
+        Args:
+            limit: Maximum number of entries to retrieve (default: 50)
+        
+        Returns:
+            List of HardwareLogRow dictionaries
+        """
+        logs: List[HardwareLogRow] = []
+        try:
+            cursor: sqlite3.Cursor = self.connection.cursor()
+            cursor.execute("""
+                SELECT timestamp, cpu_temp, cpu_usage, gpu_temp, gpu_usage, ram_usage
+                FROM hardware_log
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                logs.append({
+                    'timestamp': row[0],
+                    'cpu_temp': row[1],
+                    'cpu_usage': row[2],
+                    'gpu_temp': row[3],
+                    'gpu_usage': row[4],
+                    'ram_usage': row[5]
+                })
+            
+            logger.info(f"Retrieved {len(logs)} historical log entries")
+        except Exception as e:
+            logger.error(f"Failed to retrieve historical logs: {e}")
+        
+        return logs
+    
     def close(self) -> None:
         """
         Cleans up resources by stopping the thread and closing the database
@@ -192,3 +245,5 @@ class VitreosDB:
         if self.connection:
             self.connection.close()
             logger.info("Database connection closed.")
+
+

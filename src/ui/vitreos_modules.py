@@ -8,9 +8,9 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLab
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
-from src.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
-from src.vitreos_widgets import VitreosWinFrame, VitreosSegmentedBar, VitreosVerticalBar
-from src.vitreos_telemetry import TelemetryWorker
+from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
+from src.ui.vitreos_widgets import VitreosWinFrame, VitreosSegmentedBar, VitreosVerticalBar
+from src.core.vitreos_telemetry import TelemetryWorker
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1021,3 +1021,5 @@ __all__ = [
     'MemoryArray',
     'NetInterface',
 ]
+
+

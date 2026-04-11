@@ -4,12 +4,12 @@ Specialized UI components matching Figma design specifications
 """
 
 from typing import Optional, List, Tuple
-from PyQt6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit
+from PyQt6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLayout
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QLinearGradient, QPaintEvent, QFont
 from datetime import datetime
 
-from vitreos_theme import (
+from src.ui.vitreos_theme import (
     VITREOS_COLORS, FONT_SIZES, get_color, get_font, hex_to_qcolor
 )
 
@@ -42,14 +42,23 @@ class VitreosSegmentedBar(QWidget):
         self.alert_threshold = alert_threshold
         self.value = 0.0
         self.max_value = 100.0
+        self.status_override = 'auto'
         
         self.setMinimumHeight(height)
         self.setMaximumHeight(height)
     
-    def set_value(self, value: float, max_value: float = 100.0) -> None:
-        """Update bar value and trigger repaint."""
+    def set_value(self, value: float, max_value: float = 100.0, status: str = 'auto') -> None:
+        """
+        Update bar value and trigger repaint.
+        
+        Args:
+            value: Current value
+            max_value: Maximum value for scaling
+            status: 'auto' (use threshold), 'normal', 'warning', 'critical'
+        """
         self.value = min(value, max_value)
         self.max_value = max_value
+        self.status_override = status
         self.update()
     
     def paintEvent(self, event: QPaintEvent) -> None:
@@ -64,8 +73,15 @@ class VitreosSegmentedBar(QWidget):
         fill_ratio = self.value / self.max_value if self.max_value > 0 else 0
         filled_segments = int(fill_ratio * self.segments)
         
-        # Determine if in alert zone
-        alert_zone = filled_segments >= int(self.segments * self.alert_threshold)
+        # Determine color based on status
+        if self.status_override == 'critical':
+            alert_zone = True
+        elif self.status_override == 'warning':
+            alert_zone = True
+        elif self.status_override == 'normal':
+            alert_zone = False
+        else:  # 'auto'
+            alert_zone = filled_segments >= int(self.segments * self.alert_threshold)
         
         for i in range(self.segments):
             x = i * (segment_width + self.gap)
@@ -75,14 +91,14 @@ class VitreosSegmentedBar(QWidget):
                 # Active segment
                 if alert_zone:
                     color = get_color('warning_orange')
-                    glow_color = get_color('warning_orange', 136)  # 88 in hex = 136
+                    glow_color = get_color('warning_orange', 136)  # 0x88 alpha
                 else:
                     color = get_color(self.color_name)
                     glow_color = get_color(self.color_name, 136)
                 
                 painter.fillRect(rect, color)
                 
-                # Glow effect
+                # Glow effect (reduced intensity from Figma: 4px)
                 painter.setPen(QPen(glow_color, 0))
                 painter.drawRect(rect)
             else:
@@ -151,14 +167,14 @@ class VitreosVerticalBar(QWidget):
                 # Active segment
                 if alert_zone:
                     color = get_color('warning_orange')
-                    glow_color = get_color('warning_orange', 136)
+                    glow_color = get_color('warning_orange', 136)  # 0x88 alpha
                 else:
                     color = get_color(self.color_name)
                     glow_color = get_color(self.color_name, 136)
                 
                 painter.fillRect(rect, color)
                 
-                # Glow effect
+                # Glow effect (reduced intensity from Figma: 4px)
                 painter.setPen(QPen(glow_color, 0))
                 painter.drawRect(rect)
             else:
@@ -287,47 +303,60 @@ class VitreosWinFrame(QFrame):
         layout.addLayout(left_layout)
         layout.addStretch()
         
-        # Right side: PID + Controls
-        if self.pid:
-            pid_label = QLabel(f"PID:{self.pid}")
-            pid_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-            pid_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
-            layout.addWidget(pid_label)
-        
-        # Minimize button
-        min_btn = QPushButton("_")
-        min_btn.setFixedSize(14, 14)
-        min_btn.setFont(get_font('mono', FONT_SIZES['small']))
-        min_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {VITREOS_COLORS['bg_card']};
-                border: 1px solid {VITREOS_COLORS['text_darker']};
-                color: {VITREOS_COLORS['text_secondary']};
-            }}
-            QPushButton:hover {{
-                background: {VITREOS_COLORS['border_primary']};
+        # Right side: Aesthetic window controls (non-functional)
+        # Minimize glyph
+        self.min_label = QLabel("_")
+        self.min_label.setFont(get_font('mono', 9))
+        self.min_label.setFixedSize(14, 14)
+        self.min_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.min_label.setStyleSheet(f"""
+            QLabel {{
+                color: {VITREOS_COLORS['text_dim']};
+                background: transparent;
             }}
         """)
-        min_btn.clicked.connect(self.minimize_clicked.emit)
-        layout.addWidget(min_btn)
-        
-        # Close button
-        close_btn = QPushButton("×")
-        close_btn.setFixedSize(14, 14)
-        close_btn.setFont(get_font('mono', FONT_SIZES['small']))
-        close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {VITREOS_COLORS['bg_card']};
-                border: 1px solid {VITREOS_COLORS['text_darker']};
-                color: {VITREOS_COLORS['critical_red']};
-            }}
-            QPushButton:hover {{
-                background: {VITREOS_COLORS['critical_red']};
-                color: {VITREOS_COLORS['text_primary']};
+        self.min_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.min_label.enterEvent = lambda e: self.min_label.setStyleSheet(f"""
+            QLabel {{
+                color: {VITREOS_COLORS[self.accent_color_name]};
+                background: transparent;
+                text-shadow: 0px 0px 4px {VITREOS_COLORS[self.accent_color_name]};
             }}
         """)
-        close_btn.clicked.connect(self.close_clicked.emit)
-        layout.addWidget(close_btn)
+        self.min_label.leaveEvent = lambda e: self.min_label.setStyleSheet(f"""
+            QLabel {{
+                color: {VITREOS_COLORS['text_dim']};
+                background: transparent;
+            }}
+        """)
+        layout.addWidget(self.min_label)
+        
+        # Close glyph
+        self.close_label = QLabel("×")
+        self.close_label.setFont(get_font('mono', 9))
+        self.close_label.setFixedSize(14, 14)
+        self.close_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.close_label.setStyleSheet(f"""
+            QLabel {{
+                color: {VITREOS_COLORS['text_dim']};
+                background: transparent;
+            }}
+        """)
+        self.close_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_label.enterEvent = lambda e: self.close_label.setStyleSheet(f"""
+            QLabel {{
+                color: {VITREOS_COLORS[self.accent_color_name]};
+                background: transparent;
+                text-shadow: 0px 0px 4px {VITREOS_COLORS[self.accent_color_name]};
+            }}
+        """)
+        self.close_label.leaveEvent = lambda e: self.close_label.setStyleSheet(f"""
+            QLabel {{
+                color: {VITREOS_COLORS['text_dim']};
+                background: transparent;
+            }}
+        """)
+        layout.addWidget(self.close_label)
         
         return title_bar
     
@@ -348,13 +377,13 @@ class VitreosWinFrame(QFrame):
         """)
     
     def paintEvent(self, event: QPaintEvent) -> None:
-        """Draw scanline overlay effect."""
+        """Draw scanline overlay effect (Figma spec: every 2px)."""
         super().paintEvent(event)
         
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         
-        # Scanline pattern (starts below title bar)
+        # Scanline pattern (starts below title bar) - Figma: every 2px
         scanline_color = QColor(0, 0, 0, 20)  # rgba(0,0,0,0.08)
         pen = QPen(scanline_color)
         painter.setPen(pen)
@@ -362,11 +391,39 @@ class VitreosWinFrame(QFrame):
         y = 24  # Start below title bar
         while y < self.height():
             painter.drawLine(0, y, self.width(), y)
-            y += 4  # Every 4 pixels
+            y += 4  # Draw line every 4px (creates 2px transparent, 2px line pattern)
     
     def set_content_layout(self, layout: QVBoxLayout) -> None:
         """Set the content area layout."""
         self.content_widget.setLayout(layout)
+
+
+def clear_layout(layout: QLayout | None) -> None:
+    """Recursively and safely clear all items from a QLayout.
+
+    This helper removes widgets from the layout, calls `deleteLater()` on
+    them to ensure Qt frees resources, and descends into nested layouts.
+
+    Args:
+        layout: The QLayout instance to clear. If None, this is a no-op.
+    """
+    if layout is None:
+        return
+
+    while layout.count():
+        item = layout.takeAt(0)
+        if item is None:
+            continue
+
+        w = item.widget()
+        if w is not None:
+            # Remove from parent and schedule for deletion
+            w.setParent(None)
+            w.deleteLater()
+        else:
+            child = item.layout()
+            if child is not None:
+                clear_layout(child)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -382,7 +439,7 @@ class SystemPulseLog(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         
-        self.setFixedWidth(232)
+        self.setFixedWidth(260)  # Widened from 232px to 260px
         self.log_entries: List[Tuple[str, str, str, str]] = []  # (time, level, msg, color)
         self.cursor_visible = True
         
@@ -408,13 +465,14 @@ class SystemPulseLog(QWidget):
         self.log_widget.setReadOnly(True)
         self.log_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.log_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.log_widget.setFont(get_font('mono', FONT_SIZES['small']))
+        self.log_widget.setFont(get_font('mono', 8))  # Reduced from 9px to 8px
         self.log_widget.setStyleSheet(f"""
             QTextEdit {{
                 background: {VITREOS_COLORS['bg_secondary']};
                 border: none;
                 color: {VITREOS_COLORS['text_dim']};
                 padding: 8px;
+                line-height: 1.2;
             }}
         """)
         layout.addWidget(self.log_widget, 1)
@@ -430,8 +488,8 @@ class SystemPulseLog(QWidget):
         # Apply sidebar styling
         self.setStyleSheet(f"""
             SystemPulseLog {{
-                background: {VITREOS_COLORS['bg_secondary']};
-                border-right: 1px solid {VITREOS_COLORS['border_primary']};
+                background: #0D0D0D;
+                border-right: 1px solid {VITREOS_COLORS['primary_purple']};
             }}
         """)
     
@@ -477,26 +535,26 @@ class SystemPulseLog(QWidget):
         logo_widget.setStyleSheet(f"border-bottom: 1px solid {VITREOS_COLORS['border_secondary']};")
         
         layout = QVBoxLayout(logo_widget)
-        layout.setContentsMargins(12, 16, 12, 16)
-        layout.setSpacing(8)
+        layout.setContentsMargins(12, 12, 12, 12)  # Reduced padding
+        layout.setSpacing(6)  # Reduced spacing
         
         # VITREOS logo
         logo = QLabel("VITREOS")
-        logo.setFont(get_font('display', FONT_SIZES['logo']))
+        logo.setFont(get_font('display', 36))  # Reduced from 44pt
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo.setStyleSheet(f"""
             color: {VITREOS_COLORS['primary_purple']};
-            letter-spacing: 4px;
+            letter-spacing: 3px;
         """)
         layout.addWidget(logo)
         
         # Subtitle
-        subtitle = QLabel("── HARDWARE MONITOR v2.1 ──")
-        subtitle.setFont(get_font('mono', FONT_SIZES['tiny']))
+        subtitle = QLabel("── HARDWARE MONITOR v3.0 ──")
+        subtitle.setFont(get_font('mono', FONT_SIZES['micro']))  # 7px
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setStyleSheet(f"""
             color: {VITREOS_COLORS['purple_darker']};
-            letter-spacing: 2px;
+            letter-spacing: 1px;
         """)
         layout.addWidget(subtitle)
         
@@ -605,7 +663,7 @@ class SystemPulseLog(QWidget):
     
     def append_log(self, level: str, message: str, color: str = 'text_dim') -> None:
         """
-        Append a log entry to the terminal.
+        Append a log entry to the terminal with text shadow for readability.
         
         Args:
             level: Log level (OK, WARN, CPU, GPU, etc.)
@@ -617,10 +675,11 @@ class SystemPulseLog(QWidget):
         
         color_hex = VITREOS_COLORS.get(color, VITREOS_COLORS['text_dim'])
         
+        # Add text shadow for better readability over transparent background
         html = f"""
-        <span style="color: {VITREOS_COLORS['text_darker']};">[{time_str}]</span>
-        <span style="color: {color_hex};">[{level}]</span>
-        <span style="color: {VITREOS_COLORS['text_dim']};">{message}</span>
+        <span style="color: {VITREOS_COLORS['text_darker']}; text-shadow: 0px 0px 3px #000;">[{time_str}]</span>
+        <span style="color: {color_hex}; text-shadow: 0px 0px 4px {color_hex}, 0px 0px 2px #000; font-weight: bold;">[{level}]</span>
+        <span style="color: {VITREOS_COLORS['text_dim']}; text-shadow: 0px 0px 3px #000;">{message}</span>
         """
         
         self.log_widget.append(html)
@@ -640,3 +699,5 @@ __all__ = [
     'VitreosWinFrame',
     'SystemPulseLog',
 ]
+
+

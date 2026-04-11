@@ -7,8 +7,8 @@ from typing import Dict, Any, Optional
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QCheckBox, QGridLayout, QTextEdit)
 from PyQt6.QtCore import Qt, pyqtSignal
-from src.vitreos_widgets import VitreosWinFrame
-from src.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
+from src.ui.vitreos_widgets import VitreosWinFrame
+from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
 
 
 class RemoteTab(QWidget):
@@ -290,3 +290,5 @@ class RemoteTab(QWidget):
         
         if self.tab_check.isChecked():
             self.preview_state.setText(f"Analyzing: {tab}")
+
+

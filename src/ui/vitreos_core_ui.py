@@ -493,3 +493,5 @@ class VitreosModule(QFrame):
             color: white;
         """)
         self.hazard_label.show()
+
+

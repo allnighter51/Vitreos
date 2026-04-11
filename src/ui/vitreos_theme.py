@@ -29,28 +29,28 @@ VITREOS_COLORS: Dict[str, str] = {
     'cyan': '#06B6D4',
     'green': '#22C55E',
     
-    # Backgrounds
-    'bg_primary': '#0D0D0D',
-    'bg_secondary': '#0A0A0A',
-    'bg_card': '#111111',
-    'bg_titlebar': '#141414',
-    'bg_frame': '#0F0F0F',
+    # Backgrounds (Figma dark mode - oklch converted to hex)
+    'bg_primary': '#0D0D0D',      # oklch(0.145 0 0)
+    'bg_secondary': '#0A0A0A',    # Darker variant
+    'bg_card': '#111111',         # Card background
+    'bg_titlebar': '#141414',     # Title bar
+    'bg_frame': '#0F0F0F',        # Frame background
     
-    # Borders
-    'border_primary': '#2A2A2A',
-    'border_secondary': '#1E1E1E',
-    'border_dim': '#1A1A1A',
+    # Borders (Figma dark mode)
+    'border_primary': '#2A2A2A',  # oklch(0.269 0 0) - main borders
+    'border_secondary': '#1E1E1E', # Subtle borders
+    'border_dim': '#1A1A1A',      # Dimmer borders
     
-    # Text
-    'text_primary': '#E2E8F0',
-    'text_secondary': '#555555',
-    'text_dim': '#444444',
-    'text_darker': '#333333',
-    'text_darkest': '#2A2A2A',
+    # Text (Figma dark mode)
+    'text_primary': '#E2E8F0',    # oklch(0.985 0 0) - bright text
+    'text_secondary': '#555555',  # Medium gray
+    'text_dim': '#444444',        # Dim text
+    'text_darker': '#333333',     # Darker text
+    'text_darkest': '#2A2A2A',    # Darkest text
     
     # Segments (LED bars)
-    'segment_off': '#1C1C1C',
-    'segment_dim': '#1A1A1A',
+    'segment_off': '#1C1C1C',     # Inactive segment
+    'segment_dim': '#1A1A1A',     # Dim segment
 }
 
 
@@ -84,15 +84,21 @@ FONT_SIZES: Dict[str, int] = {
 def load_google_fonts() -> Dict[str, bool]:
     """
     Load Google Fonts into Qt Font Database.
-    Downloads and caches fonts if not present.
+    Uses absolute paths to ensure fonts are found regardless of launch directory.
     
     Returns:
         Dict with font names and load status
     """
     status = {}
     
-    # Font files should be placed in a 'fonts' directory
-    font_dir = os.path.join(os.path.dirname(__file__), 'fonts')
+    # Get absolute path to fonts directory
+    # Go up from src/ to project root, then into assets/fonts/
+    current_file = os.path.abspath(__file__)
+    src_dir = os.path.dirname(current_file)
+    project_root = os.path.dirname(src_dir)
+    font_dir = os.path.join(project_root, 'assets', 'fonts')
+    
+    print(f"[VITREOS THEME] Looking for fonts in: {font_dir}")
     
     fonts_to_load = {
         'Share Tech Mono': 'ShareTechMono-Regular.ttf',
@@ -106,7 +112,7 @@ def load_google_fonts() -> Dict[str, bool]:
             font_id = QFontDatabase.addApplicationFont(font_path)
             if font_id != -1:
                 status[font_name] = True
-                print(f"[VITREOS THEME] Loaded font: {font_name}")
+                print(f"[VITREOS THEME] Loaded font: {font_name} from {font_path}")
             else:
                 status[font_name] = False
                 print(f"[VITREOS THEME] Failed to load font: {font_name}")
@@ -140,10 +146,17 @@ def get_font(font_type: str = 'mono', size: int = 10, weight: QFont.Weight = QFo
     font = QFont(primary, size, weight)
     
     # Check if font is available, fallback if not
-    if not QFontDatabase.families().__contains__(primary):
-        font = QFont(fallback, size, weight)
+    available_families = QFontDatabase.families()
+    if primary not in available_families:
+        # Use high-quality system fallback
+        if 'Segoe UI Variable' in available_families:
+            font = QFont('Segoe UI Variable', size, QFont.Weight.DemiBold)
+        elif 'Segoe UI' in available_families:
+            font = QFont('Segoe UI', size, QFont.Weight.DemiBold)
+        else:
+            font = QFont(fallback, size, weight)
     
-    font.setStyleHint(QFont.StyleHint.Monospace)
+    font.setStyleHint(QFont.StyleHint.Monospace if font_type == 'mono' else QFont.StyleHint.SansSerif)
     return font
 
 
@@ -375,3 +388,5 @@ __all__ = [
     'get_glow_stylesheet',
     'initialize_theme',
 ]
+
+

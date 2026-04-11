@@ -6,8 +6,8 @@ from typing import Optional
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
                              QLabel, QSlider, QPushButton, QProgressBar)
 from PyQt6.QtCore import Qt, pyqtSignal
-from src.vitreos_core_ui import LiquidGlassCard
-from src.vitreos_workers import GPUTelemetry
+from src.ui.vitreos_core_ui import LiquidGlassCard
+from src.core.vitreos_workers import GPUTelemetry
 
 
 class GPUProTab(QWidget):
@@ -194,3 +194,5 @@ class GPUProTab(QWidget):
             self.throttle_label.show()
         else:
             self.throttle_label.hide()
+
+

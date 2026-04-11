@@ -7,8 +7,8 @@ from typing import Optional
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QPushButton, QTextEdit, QGridLayout)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from src.vitreos_tweaks import SystemTweaker
-from src.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
+from src.core.vitreos_tweaks import SystemTweaker
+from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
 
 
 class TweakWorker(QThread):
@@ -219,3 +219,5 @@ class TweaksTab(QWidget):
                     self.log_message("INFO", line, "cyan")
         else:
             self.log_message("FAIL", message, "critical_red")
+
+

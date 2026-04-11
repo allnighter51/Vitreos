@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""
-Vitreos V3 - Application Entry Point
-Launch the Vitreos hardware monitoring application
-"""
+import sys
+import os
 
-# Global Debug Flag
-DEBUG_MODE = True
+# Ensure the project root is on the Python path
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
+from src.main import main
+
 
 if __name__ == "__main__":
-    from src.vitreos_main_v3 import main
     main()
+
+

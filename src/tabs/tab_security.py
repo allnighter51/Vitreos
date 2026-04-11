@@ -295,3 +295,5 @@ class SecurityTab(QWidget):
         
         # Auto-scroll to bottom
         self.events_table.scrollToBottom()
+
+

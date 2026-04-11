@@ -147,3 +147,5 @@ class TuningConfirmationDialog(QDialog):
         """Handle mouse move for window dragging"""
         if a0 and a0.buttons() == Qt.MouseButton.LeftButton:
             self.move(a0.globalPosition().toPoint() - self._drag_pos)
+
+

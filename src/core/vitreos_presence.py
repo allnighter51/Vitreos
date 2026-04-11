@@ -157,3 +157,5 @@ class PresenceWorker(QThread):
 
 
 __all__ = ['PresenceWorker']
+
+

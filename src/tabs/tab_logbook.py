@@ -190,3 +190,5 @@ class LogbookTab(QWidget):
             cursor.movePosition(cursor.MoveOperation.Start)  # type: ignore
             cursor.movePosition(cursor.MoveOperation.Down, cursor.MoveMode.KeepAnchor, 100)  # type: ignore
             cursor.removeSelectedText()
+
+

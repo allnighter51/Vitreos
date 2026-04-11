@@ -4,7 +4,7 @@ Vitreos Vitals Tab - System Overview Dashboard
 """
 from typing import Dict, Any, Optional
 from PyQt6.QtWidgets import QWidget, QGridLayout
-from src.vitreos_core_ui import VitreosModule
+from src.ui.vitreos_core_ui import VitreosModule
 
 
 class VitalsTab(QWidget):
@@ -110,3 +110,5 @@ class VitalsTab(QWidget):
             self.disk_module.set_hazard_level("WARNING", "#ff8c00")
         else:
             self.disk_module.set_hazard_level("STABLE", "#00ff00")
+
+
