@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vitreos"
+version = "3.0.0"
+description = "High-end desktop hardware monitor with Liquid Glass UI"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Vitreos Development Team"}
+]
+keywords = ["hardware", "monitoring", "system", "gpu", "cpu", "dashboard"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "Topic :: System :: Monitoring",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: Microsoft :: Windows",
+]
+
+dependencies = [
+    "PyQt6>=6.4.0",
+    "psutil>=5.9.0",
+    "nvidia-ml-py>=11.495.46",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "pylint>=2.15.0",
+]
+security = [
+    "watchdog>=2.1.0",
+    "pywin32>=304",
+]
+
+[project.urls]
+Homepage = "https://github.com/mercurycontentmgmt-svg/vitreos"
+Repository = "https://github.com/mercurycontentmgmt-svg/vitreos"
+Issues = "https://github.com/mercurycontentmgmt-svg/vitreos/issues"
+
+[project.scripts]
+vitreos = "src.vitreos_main_v3:main"
+
+[tool.setuptools]
+packages = ["src", "src.tabs"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+
+[tool.pylint.messages_control]
+disable = ["C0111", "C0103"]

@@ -1,0 +1,17 @@
+{
+  "discord": {
+    "webhook_url": "",
+    "message_id": ""
+  },
+  "monitoring": {
+    "polling_interval_ms": 2000,
+    "enable_gpu": true,
+    "enable_security": true,
+    "enable_network": true,
+    "verbose_mode": false
+  },
+  "theme": {
+    "hue": 280,
+    "dark_mode": true
+  }
+}

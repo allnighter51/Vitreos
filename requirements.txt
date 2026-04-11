@@ -3,3 +3,5 @@ psutil
 nvidia-ml-py
 requests
 pywin32
+websockets
+pypresence

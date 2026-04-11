@@ -1,0 +1,11 @@
+{
+  "channels": {
+    "SECURITY": "",
+    "THERMALS": "",
+    "SYSTEM": "",
+    "NETWORK": "",
+    "STORAGE": ""
+  },
+  "default_webhook": "",
+  "enable_alerts": true
+}
