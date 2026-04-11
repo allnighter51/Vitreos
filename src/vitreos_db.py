@@ -66,15 +66,18 @@ class VitreosDB:
             except Exception as e:
                 logger.error(f"Database worker failed to write log entry: {e}")
 
-    def __init__(self, db_path: str = "vitreos_history.db") -> None:
+    def __init__(self, db_path: str = "data/vitreos_history.db") -> None:
         """
         Initializes the database, creates the necessary tables, and starts the
         background worker thread for handling database operations.
         """
-        # Make path absolute relative to workspace root
+        # Resolve relative paths against the project root (one level above src/)
         if not os.path.isabs(db_path):
-            workspace_root = Path(__file__).parent
-            db_path = str(workspace_root / db_path)
+            project_root = Path(__file__).resolve().parents[1]
+            db_path = str(project_root / db_path)
+
+        # Ensure parent directory exists (e.g., data/)
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
         # Use check_same_thread=False to allow the connection to be used
         # by the background worker thread.

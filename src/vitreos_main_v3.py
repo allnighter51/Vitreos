@@ -179,8 +179,10 @@ class VitreosNavBar(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             # Use OS-native drag to prevent click-through
             win = self.window()
-            if win and win.windowHandle():
-                win.windowHandle().startSystemMove()
+            if win:
+                handle = win.windowHandle()
+                if handle:
+                    handle.startSystemMove()
             event.accept()
     
     def _on_tab_clicked(self, tab_name: str) -> None:
@@ -578,6 +580,10 @@ class VitreosMainWindow(QMainWindow):
                         if tab_name == 'CONSOLE' and hasattr(tab_widget, 'write_raw'):
                             tab_widget.write_raw(data)  # type: ignore[attr-defined]
                         
+                        # Send process data to Processes tab (if cached)
+                        if tab_name == 'PROCESSES' and 'processes' in data and hasattr(tab_widget, 'update_processes'):
+                            tab_widget.update_processes(data['processes'])  # type: ignore[attr-defined]
+                        
                         # Send legacy data to all tabs with update methods
                         if hasattr(tab_widget, 'update_stats'):
                             tab_widget.update_stats(legacy_data)  # type: ignore[attr-defined]
@@ -664,7 +670,8 @@ class VitreosMainWindow(QMainWindow):
                 # Reuse cached Network tab
                 self.active_tab_widget = self.tab_cache['NETWORK']
                 self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                self.active_tab_widget.show()
+                if self.active_tab_widget:
+                    self.active_tab_widget.show()
                 log_msg = "[VITREOS] Restored NetworkTab from cache"
                 print(log_msg)
                 self.send_to_console(log_msg)
@@ -683,7 +690,8 @@ class VitreosMainWindow(QMainWindow):
                         self.active_tab_widget.set_primary_adapter(self.telemetry_worker.active_adapter)  # type: ignore[attr-defined]
                     
                     self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                    self.active_tab_widget.show()
+                    if self.active_tab_widget:
+                        self.active_tab_widget.show()
                     log_msg = "[VITREOS] Loaded NetworkTab from tabs/tab_network.py"
                     print(log_msg)
                     self.send_to_console(log_msg)
@@ -699,7 +707,8 @@ class VitreosMainWindow(QMainWindow):
             try:
                 self.active_tab_widget = SecurityTab()
                 self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                self.active_tab_widget.show()
+                if self.active_tab_widget:
+                    self.active_tab_widget.show()
                 print("[VITREOS] Loaded SecurityTab from tabs/tab_security.py")
             except Exception as e:
                 print(f"[VITREOS] Error loading SecurityTab: {e}")
@@ -710,30 +719,51 @@ class VitreosMainWindow(QMainWindow):
             try:
                 self.active_tab_widget = GPUProTab()
                 self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                self.active_tab_widget.show()
+                if self.active_tab_widget:
+                    self.active_tab_widget.show()
                 print("[VITREOS] Loaded GPUProTab from tabs/tab_gpu_pro.py")
             except Exception as e:
                 print(f"[VITREOS] Error loading GPUProTab: {e}")
                 self.gpu_module.show()  # Fallback
         
         elif tab_name == 'PROCESSES' and TABS_AVAILABLE:
-            # Load ProcessesTab from tabs/
-            try:
-                self.active_tab_widget = ProcessesTab()
+            # Task 1: Check cache first, create only if needed
+            if 'PROCESSES' in self.tab_cache:
+                # Reuse cached Processes tab
+                self.active_tab_widget = self.tab_cache['PROCESSES']
                 self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                self.active_tab_widget.show()
-                print("[VITREOS] Loaded ProcessesTab from tabs/tab_processes.py")
-            except Exception as e:
-                print(f"[VITREOS] Error loading ProcessesTab: {e}")
-                self.cpu_module.show()
-                self.memory_module.show()
+                if self.active_tab_widget:
+                    self.active_tab_widget.show()
+                log_msg = "[VITREOS] Restored ProcessesTab from cache"
+                print(log_msg)
+                self.send_to_console(log_msg)
+            else:
+                # Create new Processes tab and cache it
+                try:
+                    self.active_tab_widget = ProcessesTab()
+                    self.tab_cache['PROCESSES'] = self.active_tab_widget  # Cache it
+                    
+                    # Connect log signal to sidebar
+                    self.active_tab_widget.log_message.connect(self._handle_log)  # type: ignore[attr-defined]
+                    
+                    self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
+                    if self.active_tab_widget:
+                        self.active_tab_widget.show()
+                    log_msg = "[VITREOS] Loaded ProcessesTab from tabs/tab_processes.py"
+                    print(log_msg)
+                    self.send_to_console(log_msg)
+                except Exception as e:
+                    print(f"[VITREOS] Error loading ProcessesTab: {e}")
+                    self.cpu_module.show()
+                    self.memory_module.show()
         
         elif tab_name == 'STORAGE' and TABS_AVAILABLE:
             # Load StorageTab from tabs/
             try:
                 self.active_tab_widget = StorageTab()
                 self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                self.active_tab_widget.show()
+                if self.active_tab_widget:
+                    self.active_tab_widget.show()
                 print("[VITREOS] Loaded StorageTab from tabs/tab_storage.py")
             except Exception as e:
                 print(f"[VITREOS] Error loading StorageTab: {e}")
@@ -744,7 +774,8 @@ class VitreosMainWindow(QMainWindow):
             try:
                 self.active_tab_widget = TweaksTab()
                 self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                self.active_tab_widget.show()
+                if self.active_tab_widget:
+                    self.active_tab_widget.show()
                 print("[VITREOS] Loaded TweaksTab from tabs/tab_tweaks.py")
             except Exception as e:
                 print(f"[VITREOS] Error loading TweaksTab: {e}")
@@ -755,7 +786,8 @@ class VitreosMainWindow(QMainWindow):
                 # Reuse cached Console tab
                 self.active_tab_widget = self.tab_cache['CONSOLE']
                 self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                self.active_tab_widget.show()
+                if self.active_tab_widget:
+                    self.active_tab_widget.show()
                 log_msg = "[VITREOS] Restored ConsoleTab from cache"
                 print(log_msg)
                 self.send_to_console(log_msg)
@@ -765,7 +797,8 @@ class VitreosMainWindow(QMainWindow):
                     self.active_tab_widget = ConsoleTab()
                     self.tab_cache['CONSOLE'] = self.active_tab_widget  # Cache it
                     self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                    self.active_tab_widget.show()
+                    if self.active_tab_widget:
+                        self.active_tab_widget.show()
                     log_msg = "[VITREOS] Loaded ConsoleTab from tabs/tab_console.py"
                     print(log_msg)
                     self.send_to_console(log_msg)
@@ -776,7 +809,8 @@ class VitreosMainWindow(QMainWindow):
             if 'REMOTE' in self.tab_cache:
                 self.active_tab_widget = self.tab_cache['REMOTE']
                 self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                self.active_tab_widget.show()
+                if self.active_tab_widget:
+                    self.active_tab_widget.show()
                 log_msg = "[VITREOS] Restored RemoteTab from cache"
                 print(log_msg)
                 self.send_to_console(log_msg)
@@ -788,7 +822,8 @@ class VitreosMainWindow(QMainWindow):
                     if self.presence_worker:
                         self.presence_worker.status_changed.connect(self.active_tab_widget.set_connection_status)  # type: ignore[attr-defined]
                     self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                    self.active_tab_widget.show()
+                    if self.active_tab_widget:
+                        self.active_tab_widget.show()
                     log_msg = "[VITREOS] Loaded RemoteTab from tabs/tab_remote.py"
                     print(log_msg)
                     self.send_to_console(log_msg)
@@ -800,7 +835,8 @@ class VitreosMainWindow(QMainWindow):
             try:
                 self.active_tab_widget = SettingsTab()
                 self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
-                self.active_tab_widget.show()
+                if self.active_tab_widget:
+                    self.active_tab_widget.show()
                 print("[VITREOS] Loaded SettingsTab from tabs/tab_settings.py")
             except Exception as e:
                 print(f"[VITREOS] Error loading SettingsTab: {e}")

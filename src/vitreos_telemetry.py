@@ -79,6 +79,9 @@ class TelemetryWorker(QThread):
         # Network hogs tracking
         self.process_connections = {}  # PID -> connection count
         
+        # Process monitoring (throttled to 2 seconds)
+        self.process_counter = 0
+        
         # Initialize NVML if available
         if NVML_AVAILABLE:
             try:
@@ -437,8 +440,9 @@ class TelemetryWorker(QThread):
         Returns:
             Dictionary with cpu, gpu, memory, storage, network, thermal data
         """
-        # Increment network hogs counter
+        # Increment counters
         self.network_hogs_counter += 1
+        self.process_counter += 1
         
         return {
             'cpu': self._get_cpu_data(),
@@ -448,6 +452,7 @@ class TelemetryWorker(QThread):
             'network': self._get_network_data(),
             'thermal': self._get_thermal_data(),
             'networkHogs': self._get_network_hogs() if self.network_hogs_counter % 5 == 0 else [],
+            'processes': self._get_process_data() if self.process_counter % 2 == 0 else [],
         }
     
     def _get_cpu_data(self) -> Dict[str, Any]:
@@ -825,6 +830,56 @@ class TelemetryWorker(QThread):
             return hogs
         except Exception as e:
             print(f"[TELEMETRY] Network hogs error: {e}")
+            return []
+    
+    def _get_process_data(self) -> List[Dict[str, Any]]:
+        """Collect top processes with CPU, RAM, and per-core thermal correlation (every 2 seconds)."""
+        try:
+            processes = []
+            cpu_data = self._get_cpu_data()
+            per_core_temps = cpu_data.get('cores', [])
+            
+            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_info', 'cpu_affinity']):
+                try:
+                    info = proc.info
+                    pid = info['pid']
+                    name = info['name']
+                    cpu_percent = info['cpu_percent'] or 0
+                    memory_mb = (info['memory_info'].rss / (1024**2)) if info['memory_info'] else 0
+                    
+                    # Get CPU affinity (which cores this process can run on)
+                    try:
+                        affinity = proc.cpu_affinity()
+                    except (psutil.AccessDenied, AttributeError):
+                        affinity = []
+                    
+                    # Calculate TPI (Thermal Pressure Index)
+                    # Correlate process CPU usage with per-core temps
+                    tpi_score = 0
+                    if affinity and per_core_temps:
+                        # Average temp of cores this process can run on
+                        core_temps = [per_core_temps[i] for i in affinity if i < len(per_core_temps)]
+                        if core_temps:
+                            avg_temp = sum(core_temps) / len(core_temps)
+                            # TPI = (CPU% / 100) * (Temp / 100) * 100
+                            tpi_score = (cpu_percent / 100) * (avg_temp / 100) * 100
+                    
+                    processes.append({
+                        'pid': pid,
+                        'name': name,
+                        'cpu_percent': round(cpu_percent, 1),
+                        'memory_mb': round(memory_mb, 1),
+                        'tpi': round(tpi_score, 1),
+                        'affinity': affinity,
+                    })
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+            
+            # Sort by CPU usage and return top 50
+            processes.sort(key=lambda x: x['cpu_percent'], reverse=True)
+            return processes[:50]
+        except Exception as e:
+            print(f"[TELEMETRY] Process data error: {e}")
             return []
 
 

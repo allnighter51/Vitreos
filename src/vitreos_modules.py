@@ -10,6 +10,7 @@ from PyQt6.QtGui import QFont
 
 from src.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
 from src.vitreos_widgets import VitreosWinFrame, VitreosSegmentedBar, VitreosVerticalBar
+from src.vitreos_telemetry import TelemetryWorker
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -710,7 +711,7 @@ class NetInterface(VitreosWinFrame):
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(title="NET_INTERFACE", accent_color="green", parent=parent)
-        self.telemetry_worker = None
+        self.telemetry_worker: Optional[TelemetryWorker] = None
         self.download_history: List[float] = [0.0] * 60
         self.upload_history: List[float] = [0.0] * 60
         self._setup_content()
