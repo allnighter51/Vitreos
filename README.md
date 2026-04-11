@@ -1,192 +1,100 @@
-# 💎 Vitreos V3 | System Sentinel
-**Intelligence through Transparency.**
+# 💎 Vitreos | System Sentinel
+> **Total Transparency. Absolute Control.**
 
-Vitreos V3 is a high-end desktop hardware monitor and system sentinel for Windows. Built with pure Python and PyQt6, it features a custom frameless 'Liquid Glass' UI with real-time hardware telemetry, advanced NVIDIA sensor integration, and Figma-accurate design implementation.
+Vitreos is a comprehensive monitoring suite that provides real-time oversight of every critical component in your system. By aggregating telemetry from dozens of hardware sensors, network adapters, and system processes, it offers a "single pane of glass" view into the health and performance of your machine.
 
-## ✨ Core Features
+## 🕹️ The 10 Core Intelligence Modules
 
-* **CPU Monitor:** Real-time AMD Ryzen 7 5700X monitoring with per-core activity grid (8C/16T)
-* **GPU Pro (NVIDIA NVML):** Deep-level NVIDIA RTX 3060 metrics including Clock Speeds, Power Draw (Watts), VRAM utilization, and Fan speeds
-* **Thermal Control:** Comprehensive temperature monitoring across CPU, GPU, motherboard, and case sensors
-* **Memory Array:** DDR4 RAM monitoring with slot-level visibility
-* **Storage Array:** NVMe/SSD/HDD monitoring with health metrics
-* **Network Interface:** Live bandwidth tracking and latency monitoring
-* **System Pulse Log:** Fixed 232px sidebar with scrolling terminal-style log and blinking cursor
-* **Liquid Glass UI:** Custom frameless window with transparent glass panels and neon accents
+Vitreos is divided into ten specialized tabs, each providing a deep dive into a specific facet of your system’s operation:
 
-## 🛠️ Tech Stack
-* **Desktop Framework:** PyQt6 (Pure Python)
-* **Hardware APIs:** `psutil`, `nvidia-ml-py` (pynvml)
-* **Database:** SQLite 3
-* **Design System:** Figma-accurate color palette, typography, and component library
-* **Fonts:** Share Tech Mono, VT323
+### 1. VITALS (The Central Command)
+The heartbeat of the application. The Vitals module features a real-time activity grid that monitors every CPU core individually. It provides high-frequency updates on package temperature, total load, and voltage (VID), ensuring you can spot thermal throttling or core-parking issues instantly.
 
-## 🚀 Installation & Setup
+### 2. NETWORK (Bandwidth Intelligence)
+A sophisticated traffic analyzer. This module allows you to select specific network adapters and monitor live throughput. It tracks download and upload speeds with high-fidelity waveforms, identifies latency spikes, and records network peaks to help diagnose ISP inconsistencies or local congestion.
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/mercurycontentmgmt-svg/vitreos.git
-   cd vitreos
-   ```
+### 3. PROCESSES (Resource Attribution)
+A specialized task manager designed for resource auditing. It tracks every active application, ranking them by CPU and Memory consumption. This allows you to identify "zombie" processes or background tasks that are siphoning performance during critical workloads.
 
-2. **Install Python dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+### 4. GPU PRO (Advanced Graphics Metrics)
+Engineered for high-end graphics workstations. Beyond basic temperature, GPU Pro monitors VRAM allocation at the chip level, core and memory clock frequencies, and real-time power draw in Watts. It includes a dedicated "Fan Row" to audit the RPM of every individual cooling fan on the card.
 
-3. **Verify NVIDIA drivers (optional, for GPU monitoring):**
-   ```bash
-   nvidia-smi
-   ```
+### 5. SECURITY (Event Surveillance)
+The security module acts as a watchdog for your system. It integrates with Discord webhooks to send automated alerts when specific thresholds are breached—such as unauthorized access attempts, critical thermal levels, or suspicious network activity.
 
-## 🎮 Launch Application
+### 6. STORAGE (Disk Health & Arrays)
+Complete oversight of your data integrity. Storage monitors NVMe, SSD, and HDD health metrics, including remaining life percentages, read/write speeds, and capacity thresholds. It is designed to alert you to imminent drive failure before data loss occurs.
 
+### 7. TWEAKS (Performance Optimization)
+The operational control center for system behavior. This module provides toggles for performance profiles, allowing you to adjust how the system prioritizes resources. It includes advanced controls for background services and OS-level optimizations.
+
+### 8. CONSOLE (Raw Telemetry Stream)
+For the developer and data scientist. The Console provides a raw, unfiltered stream of every telemetry poll captured by the system. It is invaluable for debugging hardware-software conflicts or performing a forensic audit of system performance over time.
+
+### 9. REMOTE (Integration & Presence)
+Connect Vitreos to your digital workflow. This module manages external integrations, including Discord Rich Presence, which can broadcast your hardware stats to your profile. It also handles the configuration for remote telemetry access.
+
+### 10. SETTINGS (Global Configuration)
+The fine-tuning hub for the Sentinel itself. Adjust polling intervals (down to 100ms for ultra-high resolution), manage your alert webhooks, and toggle module-specific features like "Verbose Mode" for deep logging.
+
+---
+
+## 🚀 Installation & Setup Guide
+
+Vitreos requires a specific environment to ensure high-frequency polling and UI fluidity. Follow this guide to initialize the Sentinel on your system.
+
+### 1. Environment Preparation
+Ensure you have the latest stable environment installed on your machine. Vitreos is optimized for 64-bit architectures on Windows 10 and 11.
+
+### 2. Repository Initialization
+Clone the Sentinel assets to your local directory:
+```bash
+git clone https://github.com/mercurycontentmgmt-svg/vitreos.git
+cd vitreos
+```
+
+### 3. Dependency Deployment
+Deploy the necessary libraries required for hardware sensor communication:
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Asset Integration (Fonts)
+For the interface to render correctly, you must install the custom identity fonts located in the `fonts/` directory:
+1. Open the `fonts/` folder.
+2. Right-click `ShareTechMono-Regular.ttf` and select **Install**.
+3. Right-click `VT323-Regular.ttf` and select **Install**.
+
+### 5. Graphics Driver Verification
+If you are using the **GPU PRO** module, ensure your graphics drivers are up to date. You can verify your hardware's readiness by running:
+```bash
+nvidia-smi
+```
+
+---
+
+## 🔧 Post-Install Configuration
+
+Before the first launch, configure your operational parameters in `config/settings.json`:
+
+1. **Polling Intervals:** Set `polling_interval_ms` to `1000` for standard use or `200` for high-performance auditing.
+2. **Alerts:** Add your Discord Webhook URL to the `discord` section to enable the **Security** module's alert capabilities.
+3. **Module Toggle:** Enable or disable specific modules (GPU, Network, Security) based on your hardware availability.
+
+## 🎮 Launching the Sentinel
+
+Once configured, launch the main execution script:
 ```bash
 python vitreos_main_v3.py
 ```
-
-**Architecture:**
-- PyQt6 desktop application with frameless window
-- QThread-based telemetry worker for non-blocking hardware collection
-- Signal/slot architecture for asynchronous UI updates
-- 1-second polling interval for real-time metrics
-
----
-
-## 📦 Project Structure
-
-```
-Vitreos/
-├── vitreos_main_v3.py      # Main application entry point
-├── vitreos_theme.py        # Figma design system (colors, fonts, stylesheet)
-├── vitreos_widgets.py      # Custom PyQt6 widgets (bars, frames, log)
-├── vitreos_modules.py      # Dashboard monitoring modules (CPU, GPU, etc.)
-├── vitreos_telemetry.py    # QThread hardware data collection
-├── vitreos_db.py           # SQLite database module
-├── config/                 # Configuration files
-├── fonts/                  # Custom font assets
-├── legacy_pyqt/            # Archived PyQt6 reference (READ-ONLY)
-└── requirements.txt        # Python dependencies
-```
-
----
-
-## 🔧 Configuration Files
-
-### **config/settings.json**
-```json
-{
-  "discord": {
-    "webhook_url": "",
-    "message_id": ""
-  },
-  "monitoring": {
-    "polling_interval_ms": 2000,
-    "enable_gpu": true,
-    "enable_security": true,
-    "enable_network": true
-  }
-}
-```
-
-### **config/webhooks.json**
-```json
-{
-  "channels": {
-    "SECURITY": "",
-    "THERMALS": "",
-    "SYSTEM": "",
-    "NETWORK": "",
-    "STORAGE": ""
-  },
-  "default_webhook": "",
-  "enable_alerts": true
-}
-```
-
----
-
-## 🔒 Security Note
-If you configure a Discord Webhook inside the app, it saves to `config/settings.json`. **Never commit these files to GitHub.** They are included in the `.gitignore` by default to protect your endpoints.
 
 ---
 
 ## 🐛 Troubleshooting
 
-### **NVML Not Available**
-- Install NVIDIA drivers
-- Verify GPU is detected: `nvidia-smi`
-- Install `nvidia-ml-py`: `pip install nvidia-ml-py`
-- Application will continue without GPU monitoring if NVML unavailable
-
-### **Fonts Not Loading**
-- Ensure `fonts/` directory contains `ShareTechMono-Regular.ttf` and `VT323-Regular.ttf`
-- Application will fallback to Consolas/Courier New if custom fonts unavailable
-
-### **Application Won't Start**
-- Verify Python 3.8+ is installed: `python --version`
-- Install dependencies: `pip install -r requirements.txt`
-- Check for errors in console output
-
----
-
-## 📊 Dashboard Layout
-
-### 2x3 Grid
-```
-Row 1: [StorageArray] [CpuMonitor] [ThermalCtrl]
-Row 2: [MemoryArray]  [GpuMonitor] [NetInterface]
-```
-
-### Sidebar (232px fixed width)
-- VITREOS logo (VT323 font, 44pt)
-- Status indicators (CPU, GPU, MEM, NET)
-- Scrolling terminal log
-- Blinking cursor prompt
-- Bottom status bar with clock
-
----
-
-## 🎨 Design System
-
-### Color Palette
-- **Primary:** Purple (#A855F7, #7C3AED, #6B3FA0)
-- **Warning:** Orange (#FF6B00), Red (#FF4444)
-- **Secondary:** Cyan (#06B6D4), Green (#22C55E)
-- **Backgrounds:** Dark grays (#0D0D0D, #0A0A0A, #111111)
-- **Borders:** Subtle grays (#2A2A2A, #1E1E1E, #1A1A1A)
-
-### Typography
-- **Monospace:** Share Tech Mono (primary), Consolas (fallback)
-- **Display:** VT323 (primary), Courier New (fallback)
-- **Scale:** 8 sizes from 44pt (logo) to 7pt (micro)
-
----
-
-## 🖥️ Current Test Bench
-
-- **CPU:** AMD Ryzen 7 5700X (8C/16T, Zen 3, 7nm)
-- **GPU:** NVIDIA GeForce RTX 3060 (12GB GDDR6)
-- **Platform:** Windows 10/11
-
----
-
-## 📝 Development Guidelines
-
-### Anti-Clutter Guardrails
-1. **No Root Clutter:** Consolidate logic into existing modules
-2. **No Redundancy:** Never create .backup, .old, or _v2 files
-3. **Logic Preservation:** Treat `legacy_pyqt/` as read-only reference
-4. **Zero One-Offs:** No temporary test scripts or fix-it batch files
-5. **Automatic Cleanup:** Delete `__pycache__` after tasks
-
-### Architecture Principles
-- **QThread for Hardware:** Non-blocking telemetry collection
-- **Signal/Slot Communication:** Asynchronous UI updates
-- **Graceful Degradation:** Continue without optional features (NVML)
-- **Figma-Accurate:** Exact pixel dimensions and color tokens
-
----
+* **UI Elements Oversized:** Ensure your Windows Display Scaling is set to 100%. Vitreos is pixel-perfect and may distort at high scaling percentages.
+* **Missing GPU Data:** Verify that the `nvidia-ml` library is correctly installed and that you are using a compatible hardware driver.
+* **Log Freeze:** If the System Pulse Log stops scrolling, check the **Console** tab for "Poll Failures," which may indicate a sensor conflict.
 
 *Built for absolute system transparency.*
-*v3.0.0 - Pure Python PyQt6 Architecture*
+*v3.0.0 — Stable Build*

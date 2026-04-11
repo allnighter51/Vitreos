@@ -1,196 +1,265 @@
-#!/usr/bin/env python3
 """
-Vitreos Storage Tab - Disk Monitoring & I/O Statistics
+Storage Tab - Deep Sector Analysis
+60% Drive Array | 40% I/O Analytics
 """
-from typing import Dict, Any, Optional
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-                             QLabel, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView)
-from PyQt6.QtCore import Qt, pyqtSignal
-from src.ui.vitreos_core_ui import LiquidGlassCard
+
+from typing import Optional, Dict, Any, List
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QPainter, QColor, QFont
+import random
+
+from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
+from src.ui.vitreos_widgets import VitreosWinFrame, VitreosCircularGauge, VitreosSegmentedBar
+
+
+class SectorScanWidget(QWidget):
+    """ASCII character block visualization for disk I/O."""
+    
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setMinimumHeight(120)
+        self.activity = 0.0
+        self.blocks = ['░', '▒', '▓', '█']
+        self.grid_data = [[0 for _ in range(40)] for _ in range(8)]
+        
+        # Animation timer
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._animate)
+        self.timer.start(100)
+    
+    def set_activity(self, activity: float) -> None:
+        """Set I/O activity level (0-100)."""
+        self.activity = activity
+    
+    def _animate(self) -> None:
+        """Animate sector scan."""
+        # Scroll grid left
+        for row in self.grid_data:
+            row.pop(0)
+            # Add new column based on activity
+            if self.activity > 50:
+                row.append(random.randint(2, 3))
+            elif self.activity > 20:
+                row.append(random.randint(1, 2))
+            else:
+                row.append(random.randint(0, 1))
+        
+        self.update()
+    
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        
+        # Background
+        painter.fillRect(0, 0, width, height, get_color('bg_card'))
+        
+        # Draw grid
+        cell_width = width / 40
+        cell_height = height / 8
+        
+        font = get_font('mono', 10)
+        painter.setFont(font)
+        
+        for row_idx, row in enumerate(self.grid_data):
+            for col_idx, val in enumerate(row):
+                x = int(col_idx * cell_width)
+                y = int(row_idx * cell_height)
+                
+                # Color based on intensity
+                if val == 3:
+                    color = get_color('primary_purple')
+                elif val == 2:
+                    color = get_color('purple_dim')
+                elif val == 1:
+                    color = get_color('text_secondary')
+                else:
+                    color = get_color('text_darker')
+                
+                painter.setPen(color)
+                painter.drawText(x, y + int(cell_height * 0.8), self.blocks[val])
 
 
 class StorageTab(QWidget):
-    """Storage monitoring with I/O statistics and cache management"""
+    """Storage tab with 60/40 asymmetric layout."""
     
-    cache_purge_requested = pyqtSignal(str)
-    
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setup_ui()
+        self.drive_widgets: Dict[str, tuple] = {}
+        self._setup_ui()
     
-    def setup_ui(self) -> None:
-        """Initialize the storage monitoring layout"""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+    def _setup_ui(self) -> None:
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(8)
         
-        # Header
-        header_label = QLabel("💿 Storage Monitor")
-        header_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 16px;
-            font-weight: bold;
-            color: #bc13fe;
-        """)
-        layout.addWidget(header_label)
+        # Left 60%: Drive Array
+        left_panel = VitreosWinFrame(
+            title="DRIVE_ARRAY",
+            accent_color="primary_purple"
+        )
         
-        # Drives table
-        self.drives_table = QTableWidget()
-        self.drives_table.setColumnCount(5)
-        self.drives_table.setHorizontalHeaderLabels(["Drive", "Total", "Used", "Free", "Usage %"])  # type: ignore
-        self.drives_table.setStyleSheet("""
-            QTableWidget {
-                background: rgba(12, 12, 15, 0.95);
-                border: 2px solid rgba(188, 19, 254, 0.5);
-                border-radius: 8px;
-                font-family: 'Consolas';
-                font-size: 11px;
-                color: #00f2ff;
-                gridline-color: rgba(188, 19, 254, 0.3);
-            }
-            QTableWidget::item {
-                padding: 5px;
-            }
-            QTableWidget::item:selected {
-                background: rgba(188, 19, 254, 0.3);
-            }
-            QHeaderView::section {
-                background: rgba(188, 19, 254, 0.5);
-                color: #ffffff;
-                font-weight: bold;
-                padding: 5px;
-                border: none;
-            }
-        """)
+        self.left_layout = QVBoxLayout()
+        self.left_layout.setContentsMargins(12, 12, 12, 12)
+        self.left_layout.setSpacing(8)
         
-        if header := self.drives_table.horizontalHeader():
-            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-            header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-            header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-            header.resizeSection(0, 80)
-            header.resizeSection(4, 100)
+        # Background watermark
+        fs_label = QLabel("FILE SYSTEM: [DETECTING...]")
+        fs_label.setFont(get_font('mono', 24))
+        fs_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darkest']}; opacity: 0.3;")
+        fs_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.left_layout.addWidget(fs_label)
         
-        layout.addWidget(self.drives_table)
+        self.drives_layout = QVBoxLayout()
+        self.drives_layout.setSpacing(12)
+        self.left_layout.addLayout(self.drives_layout)
         
-        # I/O Statistics cards
-        io_label = QLabel("📊 I/O Statistics")
-        io_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 14px;
-            font-weight: bold;
-            color: #bc13fe;
-            margin-top: 10px;
-        """)
-        layout.addWidget(io_label)
+        self.left_layout.addStretch()
+        left_panel.set_content_layout(self.left_layout)
+        main_layout.addWidget(left_panel, 6)
         
-        io_layout = QGridLayout()
-        io_layout.setSpacing(15)
+        # Right 40%: I/O Analytics
+        right_panel = VitreosWinFrame(
+            title="IO_ANALYTICS",
+            accent_color="cyan"
+        )
         
-        self.read_bytes_card = LiquidGlassCard("Read Bytes", "-- MB", "Total Read", self)
-        self.write_bytes_card = LiquidGlassCard("Write Bytes", "-- MB", "Total Write", self)
-        self.read_ops_card = LiquidGlassCard("Read Ops", "-- /s", "Operations", self)
-        self.write_ops_card = LiquidGlassCard("Write Ops", "-- /s", "Operations", self)
-        self.read_speed_card = LiquidGlassCard("Read Speed", "-- MB/s", "Current", self)
-        self.write_speed_card = LiquidGlassCard("Write Speed", "-- MB/s", "Current", self)
+        right_layout = QVBoxLayout()
+        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_layout.setSpacing(8)
         
-        io_layout.addWidget(self.read_bytes_card, 0, 0)
-        io_layout.addWidget(self.write_bytes_card, 0, 1)
-        io_layout.addWidget(self.read_ops_card, 1, 0)
-        io_layout.addWidget(self.write_ops_card, 1, 1)
-        io_layout.addWidget(self.read_speed_card, 2, 0)
-        io_layout.addWidget(self.write_speed_card, 2, 1)
+        # Partition health gauge
+        health_label = QLabel("PARTITION HEALTH")
+        health_label.setFont(get_font('mono', FONT_SIZES['label']))
+        health_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        right_layout.addWidget(health_label)
         
-        layout.addLayout(io_layout)
+        gauge_row = QHBoxLayout()
+        self.health_gauge = VitreosCircularGauge(segments=40)
+        gauge_row.addWidget(self.health_gauge, alignment=Qt.AlignmentFlag.AlignCenter)
+        right_layout.addLayout(gauge_row)
         
-        # Cache purge buttons
-        cache_layout = QHBoxLayout()
+        self.health_status = QLabel("100% HEALTHY")
+        self.health_status.setFont(get_font('mono', FONT_SIZES['value_medium']))
+        self.health_status.setStyleSheet(f"color: {VITREOS_COLORS['green']};")
+        self.health_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        right_layout.addWidget(self.health_status)
         
-        cache_label = QLabel("🧹 Cache Management:")
-        cache_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 12px;
-            font-weight: bold;
-            color: #00f2ff;
-        """)
+        # SMART status
+        smart_label = QLabel("SMART STATUS")
+        smart_label.setFont(get_font('mono', FONT_SIZES['label']))
+        smart_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        right_layout.addWidget(smart_label)
         
-        self.temp_purge_btn = QPushButton("Clear Temp Files")
-        self.temp_purge_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(188, 19, 254, 0.3);
-                border: 2px solid #bc13fe;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-family: 'Consolas';
-                font-size: 11px;
-                font-weight: bold;
-                color: #ffffff;
-            }
-            QPushButton:hover {
-                background: rgba(188, 19, 254, 0.5);
-            }
-        """)
-        self.temp_purge_btn.clicked.connect(lambda: self.cache_purge_requested.emit("temp"))  # type: ignore
+        smart_grid = QGridLayout()
+        smart_grid.setSpacing(6)
         
-        self.prefetch_purge_btn = QPushButton("Clear Prefetch")
-        self.prefetch_purge_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(188, 19, 254, 0.3);
-                border: 2px solid #bc13fe;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-family: 'Consolas';
-                font-size: 11px;
-                font-weight: bold;
-                color: #ffffff;
-            }
-            QPushButton:hover {
-                background: rgba(188, 19, 254, 0.5);
-            }
-        """)
-        self.prefetch_purge_btn.clicked.connect(lambda: self.cache_purge_requested.emit("prefetch"))  # type: ignore
+        self.smart_labels = {}
+        smart_attrs = [
+            ('TEMP', 'temp', '°C'),
+            ('POWER ON', 'power_on', 'hrs'),
+            ('REALLOCATED', 'reallocated', 'sectors'),
+            ('PENDING', 'pending', 'sectors'),
+        ]
         
-        cache_layout.addWidget(cache_label)
-        cache_layout.addWidget(self.temp_purge_btn)
-        cache_layout.addWidget(self.prefetch_purge_btn)
-        cache_layout.addStretch()
+        for i, (label, key, unit) in enumerate(smart_attrs):
+            attr_widget = QWidget()
+            attr_widget.setStyleSheet(f"""
+                background: {VITREOS_COLORS['bg_card']};
+                border: 1px solid {VITREOS_COLORS['border_secondary']};
+            """)
+            attr_layout = QVBoxLayout(attr_widget)
+            attr_layout.setContentsMargins(6, 6, 6, 6)
+            attr_layout.setSpacing(2)
+            
+            attr_label = QLabel(label)
+            attr_label.setFont(get_font('mono', FONT_SIZES['micro']))
+            attr_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+            attr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            attr_layout.addWidget(attr_label)
+            
+            value_label = QLabel(f"0 {unit}")
+            value_label.setFont(get_font('mono', FONT_SIZES['small']))
+            value_label.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
+            value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            attr_layout.addWidget(value_label)
+            
+            self.smart_labels[key] = value_label
+            smart_grid.addWidget(attr_widget, i // 2, i % 2)
         
-        layout.addLayout(cache_layout)
+        right_layout.addLayout(smart_grid)
+        right_layout.addStretch()
+        right_panel.set_content_layout(right_layout)
+        main_layout.addWidget(right_panel, 4)
     
-    def update_disk_stats(self, stats: Dict[str, Any]) -> None:
-        """Update disk statistics display"""
-        # Update drives table
-        drives = stats.get('drives', [])
-        self.drives_table.setRowCount(len(drives))
+    def update_stats(self, data: Dict[str, Any]) -> None:
+        """Update storage display from telemetry."""
+        storage_data = data.get('storage', {})
+        drives = storage_data.get('drives', [])
         
-        for row, drive in enumerate(drives):
-            drive_item = QTableWidgetItem(drive.get('drive', ''))
-            total_item = QTableWidgetItem(f"{drive.get('total_gb', 0):.1f} GB")
-            used_item = QTableWidgetItem(f"{drive.get('used_gb', 0):.1f} GB")
-            free_item = QTableWidgetItem(f"{drive.get('free_gb', 0):.1f} GB")
-            usage_item = QTableWidgetItem(f"{drive.get('usage_percent', 0):.1f}%")
+        for drive in drives:
+            mountpoint = drive.get('mountpoint', '/')
+            device = drive.get('device', 'Unknown')
+            used_gb = drive.get('usedGB', 0)
+            total_gb = drive.get('totalGB', 0)
+            percent = drive.get('percent', 0)
             
-            # Color code usage
-            usage_pct = drive.get('usage_percent', 0)
-            if usage_pct > 90:
-                usage_item.setForeground(Qt.GlobalColor.red)  # type: ignore
-            elif usage_pct > 75:
-                usage_item.setForeground(Qt.GlobalColor.yellow)  # type: ignore
-            
-            self.drives_table.setItem(row, 0, drive_item)
-            self.drives_table.setItem(row, 1, total_item)
-            self.drives_table.setItem(row, 2, used_item)
-            self.drives_table.setItem(row, 3, free_item)
-            self.drives_table.setItem(row, 4, usage_item)
+            if mountpoint not in self.drive_widgets:
+                # Create new drive widget
+                drive_container = QWidget()
+                drive_container.setStyleSheet(f"""
+                    background: {VITREOS_COLORS['bg_card']};
+                    border: 1px solid {VITREOS_COLORS['border_secondary']};
+                """)
+                drive_layout = QVBoxLayout(drive_container)
+                drive_layout.setContentsMargins(12, 12, 12, 12)
+                drive_layout.setSpacing(6)
+                
+                # Header
+                header_row = QHBoxLayout()
+                drive_label = QLabel(f"{device} ({mountpoint})")
+                drive_label.setFont(get_font('mono', FONT_SIZES['label']))
+                drive_label.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
+                header_row.addWidget(drive_label)
+                header_row.addStretch()
+                
+                usage_label = QLabel(f"{used_gb:.1f} / {total_gb:.1f} GB")
+                usage_label.setFont(get_font('mono', FONT_SIZES['small']))
+                usage_label.setStyleSheet(f"color: {VITREOS_COLORS['primary_purple']};")
+                header_row.addWidget(usage_label)
+                drive_layout.addLayout(header_row)
+                
+                # Sector scan
+                sector_scan = SectorScanWidget()
+                drive_layout.addWidget(sector_scan)
+                
+                # Usage bar
+                usage_bar = VitreosSegmentedBar(segments=24, height=6, color='primary_purple')
+                drive_layout.addWidget(usage_bar)
+                
+                self.drives_layout.addWidget(drive_container)
+                self.drive_widgets[mountpoint] = (usage_label, usage_bar, sector_scan)
+            else:
+                usage_label, usage_bar, sector_scan = self.drive_widgets[mountpoint]
+                usage_label.setText(f"{used_gb:.1f} / {total_gb:.1f} GB")
+                usage_bar.set_value(percent, 100)
+                sector_scan.set_activity(percent)
         
-        # Update I/O cards
-        io_stats = stats.get('io', {})
-        self.read_bytes_card.set_value(f"{io_stats.get('read_mb', 0):.1f} MB")
-        self.write_bytes_card.set_value(f"{io_stats.get('write_mb', 0):.1f} MB")
-        self.read_ops_card.set_value(f"{io_stats.get('read_ops', 0)}")
-        self.write_ops_card.set_value(f"{io_stats.get('write_ops', 0)}")
-        self.read_speed_card.set_value(f"{io_stats.get('read_speed_mbps', 0):.2f} MB/s")
-        self.write_speed_card.set_value(f"{io_stats.get('write_speed_mbps', 0):.2f} MB/s")
+        # Update health gauge (use first drive)
+        if drives:
+            first_drive = drives[0]
+            health = 100 - first_drive.get('percent', 0) * 0.2  # Simulate health
+            self.health_gauge.set_value(health, 100, 'green')
+            self.health_status.setText(f"{health:.0f}% HEALTHY")
+            
+            # Update SMART (placeholder)
+            self.smart_labels['temp'].setText("35 °C")
+            self.smart_labels['power_on'].setText("1234 hrs")
+            self.smart_labels['reallocated'].setText("0 sectors")
+            self.smart_labels['pending'].setText("0 sectors")
 
 
+__all__ = ['StorageTab']

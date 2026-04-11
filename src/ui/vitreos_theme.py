@@ -1,6 +1,6 @@
 """
 Vitreos Design System - Theme Engine
-Based on Figma UI specifications with Liquid Glass aesthetic
+Based on Figma V4 UI specifications with Liquid Glass aesthetic
 """
 
 from typing import Dict, Optional
@@ -10,7 +10,7 @@ import os
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# COLOR PALETTE - Extracted from Figma Design Tokens
+# COLOR PALETTE - Extracted from Figma V4 Design Tokens
 # ═══════════════════════════════════════════════════════════════════════════
 
 VITREOS_COLORS: Dict[str, str] = {
@@ -20,6 +20,7 @@ VITREOS_COLORS: Dict[str, str] = {
     'purple_dim': '#6B3FA0',
     'purple_dark': '#5B2D8E',
     'purple_darker': '#3D1F6B',
+    'purple_underline': '#A855F7',  # Active tab underline
     
     # Warning/Alert
     'warning_orange': '#FF6B00',
@@ -29,24 +30,29 @@ VITREOS_COLORS: Dict[str, str] = {
     'cyan': '#06B6D4',
     'green': '#22C55E',
     
-    # Backgrounds (Figma dark mode - oklch converted to hex)
-    'bg_primary': '#0D0D0D',      # oklch(0.145 0 0)
+    # Backgrounds (Figma V4 dark mode)
+    'bg_primary': '#0D0D0D',      # Main app background
     'bg_secondary': '#0A0A0A',    # Darker variant
+    'bg_darker': '#080808',       # Darkest variant (V4 addition)
     'bg_card': '#111111',         # Card background
     'bg_titlebar': '#141414',     # Title bar
     'bg_frame': '#0F0F0F',        # Frame background
     
-    # Borders (Figma dark mode)
-    'border_primary': '#2A2A2A',  # oklch(0.269 0 0) - main borders
+    # Borders (Figma V4 dark mode - RESTRAINED)
+    'border_primary': '#333333',  # Main borders (inactive modules)
     'border_secondary': '#1E1E1E', # Subtle borders
     'border_dim': '#1A1A1A',      # Dimmer borders
+    'border_active': '#6B3FA0',   # Active module border (dimmed purple)
     
-    # Text (Figma dark mode)
-    'text_primary': '#E2E8F0',    # oklch(0.985 0 0) - bright text
+    # Text (Figma V4 dark mode)
+    'text_primary': '#E2E8F0',    # Bright text (V4 addition)
+    'text_bright': '#E2E8F0',     # Alias for text_primary
+    'text_sub': '#888888',        # Secondary headings (V4 addition)
     'text_secondary': '#555555',  # Medium gray
     'text_dim': '#444444',        # Dim text
     'text_darker': '#333333',     # Darker text
     'text_darkest': '#2A2A2A',    # Darkest text
+    'text_dead': '#222222',       # Nearly invisible text (V4 addition)
     
     # Segments (LED bars)
     'segment_off': '#1C1C1C',     # Inactive segment
@@ -92,9 +98,10 @@ def load_google_fonts() -> Dict[str, bool]:
     status = {}
     
     # Get absolute path to fonts directory
-    # Go up from src/ to project root, then into assets/fonts/
+    # Go up from src/ui/ to project root, then into assets/fonts/
     current_file = os.path.abspath(__file__)
-    src_dir = os.path.dirname(current_file)
+    ui_dir = os.path.dirname(current_file)
+    src_dir = os.path.dirname(ui_dir)
     project_root = os.path.dirname(src_dir)
     font_dir = os.path.join(project_root, 'assets', 'fonts')
     
@@ -166,7 +173,7 @@ def get_font(font_type: str = 'mono', size: int = 10, weight: QFont.Weight = QFo
 
 VITREOS_STYLESHEET = f"""
 /* ═══════════════════════════════════════════════════════════════════════ */
-/* VITREOS GLOBAL STYLESHEET - Liquid Glass Theme                          */
+/* VITREOS GLOBAL STYLESHEET - Liquid Glass Theme (Figma V4)              */
 /* ═══════════════════════════════════════════════════════════════════════ */
 
 QMainWindow {{
@@ -388,5 +395,3 @@ __all__ = [
     'get_glow_stylesheet',
     'initialize_theme',
 ]
-
-

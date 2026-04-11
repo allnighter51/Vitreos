@@ -4,12 +4,16 @@ Individual monitoring components for the 2x3 grid layout
 """
 
 from typing import Dict, Any, Optional, List
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QComboBox
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QPainter, QPen, QColor
+import random
 
 from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
-from src.ui.vitreos_widgets import VitreosWinFrame, VitreosSegmentedBar, VitreosVerticalBar
+from src.ui.vitreos_widgets import (
+    VitreosWinFrame, VitreosSegmentedBar, VitreosVerticalBar,
+    VitreosCircularGauge, VitreosBarcode, HazardBadge, OCBadge
+)
 from src.core.vitreos_telemetry import TelemetryWorker
 
 
@@ -24,34 +28,41 @@ class CpuMonitor(VitreosWinFrame):
         super().__init__(
             title="CPU_MONITOR",
             accent_color="cyan",
-            badge="OC",
-            badge_color="warning_orange",
             parent=parent
         )
         
-        self.detected_cores = 16  # Default, will be updated dynamically
+        self.detected_cores = 16
         self._setup_content()
     
     def _setup_content(self) -> None:
-        """Build CPU monitor layout."""
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(9, 9, 9, 9)  # Reduced by 25% from 12px
+        layout.setSpacing(6)  # Reduced by 25% from 8px
         
-        # CPU Name (dynamic)
+        # Header with OC badge
+        header_row = QHBoxLayout()
+        header_row.setSpacing(6)
+        
         self.name_label = QLabel("DETECTING CPU...")
         self.name_label.setFont(get_font('mono', FONT_SIZES['title']))
         self.name_label.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
-        layout.addWidget(self.name_label)
+        header_row.addWidget(self.name_label)
+        
+        header_row.addStretch()
+        
+        # OC Badge with diagonal hazard stripes
+        self.oc_badge = OCBadge("OC")
+        header_row.addWidget(self.oc_badge)
+        
+        layout.addLayout(header_row)
         
         self.specs_label = QLabel("INITIALIZING...")
         self.specs_label.setFont(get_font('mono', FONT_SIZES['tiny']))
         self.specs_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
         layout.addWidget(self.specs_label)
         
-        # Total Load Bar
         load_layout = QVBoxLayout()
-        load_layout.setSpacing(4)
+        load_layout.setSpacing(3)  # Reduced by 25%
         
         load_header = QHBoxLayout()
         load_label = QLabel("TOTAL LOAD")
@@ -72,9 +83,8 @@ class CpuMonitor(VitreosWinFrame):
         
         layout.addLayout(load_layout)
         
-        # Package Temp Bar
         temp_layout = QVBoxLayout()
-        temp_layout.setSpacing(4)
+        temp_layout.setSpacing(3)  # Reduced by 25%
         
         temp_header = QHBoxLayout()
         temp_label = QLabel("PACKAGE TEMP")
@@ -95,18 +105,16 @@ class CpuMonitor(VitreosWinFrame):
         
         layout.addLayout(temp_layout)
         
-        # Per-core grid
         cores_label = QLabel("PER-CORE ACTIVITY")
         cores_label.setFont(get_font('mono', FONT_SIZES['tiny']))
         cores_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
         layout.addWidget(cores_label)
         
         self.cores_grid = QGridLayout()
-        self.cores_grid.setSpacing(3)
+        self.cores_grid.setSpacing(2)  # Reduced by 25% from 3px
         self.core_bars: List[VitreosVerticalBar] = []
         self.core_widgets: List[QWidget] = []
         
-        # Create initial grid (will be rebuilt dynamically)
         self._rebuild_core_grid()
         
         layout.addLayout(self.cores_grid)
@@ -115,15 +123,12 @@ class CpuMonitor(VitreosWinFrame):
         self.set_content_layout(layout)
     
     def _rebuild_core_grid(self) -> None:
-        """Rebuild core grid based on detected core count."""
-        # Clear existing widgets
         for widget in self.core_widgets:
             self.cores_grid.removeWidget(widget)
             widget.deleteLater()
         self.core_bars.clear()
         self.core_widgets.clear()
         
-        # Calculate grid dimensions
         cols = 4
         rows = (self.detected_cores + cols - 1) // cols
         
@@ -137,8 +142,8 @@ class CpuMonitor(VitreosWinFrame):
                 border: 1px solid {VITREOS_COLORS['border_secondary']};
             """)
             core_layout = QVBoxLayout(core_widget)
-            core_layout.setContentsMargins(4, 4, 4, 4)
-            core_layout.setSpacing(2)
+            core_layout.setContentsMargins(3, 3, 3, 3)  # Reduced by 25%
+            core_layout.setSpacing(1)  # Reduced by 25%
             
             core_label = QLabel(f"C{i}")
             core_label.setFont(get_font('mono', FONT_SIZES['micro']))
@@ -154,46 +159,37 @@ class CpuMonitor(VitreosWinFrame):
             self.core_widgets.append(core_widget)
     
     def update_data(self, data: Dict[str, Any]) -> None:
-        """Update CPU monitor with fresh data."""
-        # Update CPU name dynamically
         cpu_name = data.get('name', 'Unknown CPU')
         if hasattr(self, 'name_label'):
             self.name_label.setText(cpu_name.upper())
         
-        # Update specs with physical/logical core split
         physical_cores = data.get('physicalCores', 0)
         logical_threads = data.get('logicalThreads', 0)
         if hasattr(self, 'specs_label'):
             if physical_cores > 0 and logical_threads > 0:
-                # Phase 4: Display format - "8 PHYSICAL CORES | 16 LOGICAL THREADS"
                 self.specs_label.setText(f"{physical_cores} PHYSICAL CORES | {logical_threads} LOGICAL THREADS")
             else:
                 core_count = data.get('coreCount', 0)
                 self.specs_label.setText(f"{core_count} LOGICAL CORES")
         
-        # Rebuild core grid if core count changed
         core_count = data.get('coreCount', 0)
         if core_count != self.detected_cores:
             self.detected_cores = core_count
             self._rebuild_core_grid()
         
-        # Total load
         total_load = data.get('totalLoad', 0)
         self.load_value_label.setText(f"{total_load:.0f}%")
         self.load_bar.set_value(total_load, 100)
         
-        # Temperature
         temp = data.get('temp', 0)
         self.temp_value_label.setText(f"{temp:.0f}°C")
         self.temp_bar.set_value(temp, 100)
         
-        # Update temp color if critical
         if temp > 85:
             self.temp_value_label.setStyleSheet(f"color: {VITREOS_COLORS['critical_red']};")
         else:
             self.temp_value_label.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
         
-        # Per-core usage
         cores = data.get('cores', [])
         for i, bar in enumerate(self.core_bars):
             if i < len(cores):
@@ -201,169 +197,206 @@ class CpuMonitor(VitreosWinFrame):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# GPU MONITOR - Dynamic Hardware Detection
+# GPU MONITOR - Figma V4 Design
 # ═══════════════════════════════════════════════════════════════════════════
 
 class GpuMonitor(VitreosWinFrame):
-    """GPU monitoring widget with dynamic hardware detection."""
+    """GPU monitoring widget with Figma V4 design."""
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(
             title="GPU_MONITOR",
             accent_color="warning_orange",
-            badge="GPU",
-            badge_color="warning_orange",
+            badge="⚠",
+            badge_color="critical_red",
             parent=parent
         )
-        
         self._setup_content()
     
     def _setup_content(self) -> None:
-        """Build GPU monitor layout."""
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(9, 9, 9, 9)  # Reduced by 25%
+        layout.setSpacing(3)  # Reduced by 25%
         
-        # GPU Name (dynamic)
-        self.name_label = QLabel("DETECTING GPU...")
-        self.name_label.setFont(get_font('mono', FONT_SIZES['title']))
+        self.name_label = QLabel("NVIDIA RTX 3060")
+        self.name_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
         self.name_label.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
         layout.addWidget(self.name_label)
         
-        self.specs_label = QLabel("INITIALIZING...")
-        self.specs_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-        self.specs_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
-        layout.addWidget(self.specs_label)
+        self.subtitle_label = QLabel("AMPERE // 12GB GDDR6")
+        self.subtitle_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        self.subtitle_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+        layout.addWidget(self.subtitle_label)
         
-        # GPU Usage Bar
-        usage_layout = QVBoxLayout()
-        usage_layout.setSpacing(4)
+        header_row = QHBoxLayout()
+        self.driver_label = QLabel("DRIVER: 000.00 WHQL")
+        self.driver_label.setFont(get_font('mono', 7))
+        self.driver_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+        header_row.addWidget(self.driver_label)
+        header_row.addStretch()
         
-        usage_header = QHBoxLayout()
-        usage_label = QLabel("GPU USAGE")
-        usage_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-        usage_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
-        usage_header.addWidget(usage_label)
-        usage_header.addStretch()
+        self.hazard_badge = HazardBadge("⚠ HOT")
+        header_row.addWidget(self.hazard_badge)
+        layout.addLayout(header_row)
         
-        self.usage_value_label = QLabel("0%")
-        self.usage_value_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
-        self.usage_value_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
-        usage_header.addWidget(self.usage_value_label)
+        gauge_row = QHBoxLayout()
+        gauge_row.setSpacing(6)
         
-        usage_layout.addLayout(usage_header)
+        self.vram_gauge = VitreosCircularGauge(segments=40)
+        self.vram_gauge.setFixedSize(60, 60)
+        gauge_row.addWidget(self.vram_gauge)
         
-        self.usage_bar = VitreosSegmentedBar(segments=22, height=6, color='warning_orange')
-        usage_layout.addWidget(self.usage_bar)
+        self.barcode = VitreosBarcode(height=30)
+        gauge_row.addWidget(self.barcode, 1)
+        layout.addLayout(gauge_row)
         
-        layout.addLayout(usage_layout)
-        
-        # VRAM Bar
-        vram_layout = QVBoxLayout()
-        vram_layout.setSpacing(4)
-        
-        vram_header = QHBoxLayout()
-        vram_label = QLabel("VRAM USAGE")
-        vram_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-        vram_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
-        vram_header.addWidget(vram_label)
-        vram_header.addStretch()
-        
-        self.vram_value_label = QLabel("0.0 / 12.0 GB")
-        self.vram_value_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
-        self.vram_value_label.setStyleSheet(f"color: {VITREOS_COLORS['purple_dim']};")
-        vram_header.addWidget(self.vram_value_label)
-        
-        vram_layout.addLayout(vram_header)
-        
-        self.vram_bar = VitreosSegmentedBar(segments=22, height=6, color='purple_dim')
-        vram_layout.addWidget(self.vram_bar)
-        
-        layout.addLayout(vram_layout)
-        
-        # Stats grid
         stats_grid = QGridLayout()
-        stats_grid.setSpacing(8)
+        stats_grid.setSpacing(4)
         
         self.stat_labels = {}
         stats = [
-            ('CORE CLOCK', 'coreClock', 'MHz'),
-            ('MEM CLOCK', 'memClock', 'MHz'),
-            ('POWER', 'power', 'W'),
-            ('TEMP', 'temp', '°C'),
+            ('CORE CLK', 'coreClock', 'MHz', 'primary_purple'),
+            ('MEM CLK', 'memClock', 'MHz', 'cyan'),
+            ('POWER', 'power', 'W', 'warning_orange'),
+            ('TEMP', 'temp', '°C', 'critical_red'),
         ]
         
-        for i, (label, key, unit) in enumerate(stats):
-            row = i // 2
-            col = i % 2
-            
+        for i, (label, key, unit, color) in enumerate(stats):
             stat_widget = QWidget()
             stat_widget.setStyleSheet(f"""
                 background: {VITREOS_COLORS['bg_card']};
                 border: 1px solid {VITREOS_COLORS['border_secondary']};
-                padding: 8px;
             """)
             stat_layout = QVBoxLayout(stat_widget)
-            stat_layout.setSpacing(4)
+            stat_layout.setContentsMargins(4, 4, 4, 4)
+            stat_layout.setSpacing(2)
             
             stat_label = QLabel(label)
-            stat_label.setFont(get_font('mono', FONT_SIZES['micro']))
+            stat_label.setFont(get_font('mono', 7))
             stat_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
             stat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             stat_layout.addWidget(stat_label)
             
             value_label = QLabel(f"0 {unit}")
-            value_label.setFont(get_font('mono', FONT_SIZES['value_large']))
-            value_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
+            value_label.setFont(get_font('mono', FONT_SIZES['small']))
+            value_label.setStyleSheet(f"color: {VITREOS_COLORS[color]};")
             value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             stat_layout.addWidget(value_label)
             
             self.stat_labels[key] = value_label
-            stats_grid.addWidget(stat_widget, row, col)
+            stats_grid.addWidget(stat_widget, 0, i)
         
         layout.addLayout(stats_grid)
-        layout.addStretch()
         
+        load_header = QHBoxLayout()
+        load_label = QLabel("GPU LOAD")
+        load_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        load_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        load_header.addWidget(load_label)
+        load_header.addStretch()
+        self.load_value = QLabel("0%")
+        self.load_value.setFont(get_font('mono', FONT_SIZES['tiny']))
+        self.load_value.setStyleSheet(f"color: {VITREOS_COLORS['primary_purple']};")
+        load_header.addWidget(self.load_value)
+        layout.addLayout(load_header)
+        
+        self.load_bar = VitreosSegmentedBar(segments=24, height=6, color='primary_purple')
+        layout.addWidget(self.load_bar)
+        
+        vram_header = QHBoxLayout()
+        vram_label = QLabel("VRAM USAGE")
+        vram_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        vram_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        vram_header.addWidget(vram_label)
+        vram_header.addStretch()
+        self.vram_value = QLabel("0.0 / 12.0 GB")
+        self.vram_value.setFont(get_font('mono', FONT_SIZES['tiny']))
+        self.vram_value.setStyleSheet(f"color: {VITREOS_COLORS['purple_dim']};")
+        vram_header.addWidget(self.vram_value)
+        layout.addLayout(vram_header)
+        
+        self.vram_bar = VitreosSegmentedBar(segments=24, height=6, color='purple_dim')
+        layout.addWidget(self.vram_bar)
+        
+        bw_header = QHBoxLayout()
+        bw_label = QLabel("MEM BANDWIDTH")
+        bw_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        bw_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        bw_header.addWidget(bw_label)
+        bw_header.addStretch()
+        self.bw_value = QLabel("0 GB/s")
+        self.bw_value.setFont(get_font('mono', FONT_SIZES['tiny']))
+        self.bw_value.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
+        bw_header.addWidget(self.bw_value)
+        layout.addLayout(bw_header)
+        
+        self.bw_bar = VitreosSegmentedBar(segments=24, height=6, color='warning_orange')
+        layout.addWidget(self.bw_bar)
+        
+        fan_label = QLabel("FAN ARRAY")
+        fan_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        fan_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        layout.addWidget(fan_label)
+        
+        fan_row = QHBoxLayout()
+        fan_row.setSpacing(4)
+        
+        self.fan_labels = {}
+        for fan_id in ['FAN 1', 'FAN 2', 'REAR']:
+            fan_card = QWidget()
+            fan_card.setStyleSheet(f"""
+                background: {VITREOS_COLORS['bg_card']};
+                border: 1px solid {VITREOS_COLORS['border_secondary']};
+            """)
+            fan_layout = QVBoxLayout(fan_card)
+            fan_layout.setContentsMargins(4, 4, 4, 4)
+            fan_layout.setSpacing(2)
+            
+            fan_name = QLabel(fan_id)
+            fan_name.setFont(get_font('mono', 7))
+            fan_name.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+            fan_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            fan_layout.addWidget(fan_name)
+            
+            fan_rpm = QLabel("0 RPM")
+            fan_rpm.setFont(get_font('mono', FONT_SIZES['tiny']))
+            fan_rpm.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
+            fan_rpm.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            fan_layout.addWidget(fan_rpm)
+            
+            self.fan_labels[fan_id] = fan_rpm
+            fan_row.addWidget(fan_card)
+        
+        layout.addLayout(fan_row)
+        
+        self.footer_label = QLabel("PCIe 4.0 ×16 — NVML 12.3")
+        self.footer_label.setFont(get_font('mono', 7))
+        self.footer_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+        self.footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.footer_label)
+        
+        layout.addStretch()
         self.set_content_layout(layout)
     
     def update_data(self, data: Dict[str, Any]) -> None:
-        """Update GPU monitor with fresh data."""
-        # Update GPU name dynamically
         gpu_name = data.get('name', 'NO GPU')
-        if hasattr(self, 'name_label'):
-            # Clean up name (remove "NVIDIA GeForce" prefix for brevity)
-            display_name = gpu_name.replace('NVIDIA GeForce ', '').replace('GeForce ', '').upper()
-            self.name_label.setText(display_name)
+        display_name = gpu_name.replace('NVIDIA GeForce ', '').replace('GeForce ', '').upper()
+        self.name_label.setText(display_name)
         
-        # Update specs dynamically
-        vram_total = data.get('vramTotal', 0)
-        if hasattr(self, 'specs_label') and vram_total > 0:
-            # Determine architecture from name or VRAM size
-            if 'RTX 40' in gpu_name or vram_total >= 24:
-                arch = "ADA LOVELACE"
-            elif 'RTX 30' in gpu_name or (vram_total >= 8 and vram_total < 24):
-                arch = "AMPERE"
-            elif 'RTX 20' in gpu_name:
-                arch = "TURING"
-            elif 'GTX 16' in gpu_name:
-                arch = "TURING"
-            else:
-                arch = "UNKNOWN"
-            
-            self.specs_label.setText(f"{vram_total:.0f}GB GDDR6 | {arch}")
+        vram_total = data.get('vramTotal', 12)
+        if 'RTX 40' in gpu_name or vram_total >= 24:
+            arch = "ADA LOVELACE"
+        elif 'RTX 30' in gpu_name:
+            arch = "AMPERE"
+        elif 'RTX 20' in gpu_name:
+            arch = "TURING"
+        else:
+            arch = "AMPERE"
+        self.subtitle_label.setText(f"{arch} // {vram_total:.0f}GB GDDR6")
         
-        # GPU Usage
-        usage = data.get('usage', 0)
-        self.usage_value_label.setText(f"{usage:.0f}%")
-        self.usage_bar.set_value(usage, 100)
+        driver = data.get('driver', '000.00')
+        self.driver_label.setText(f"DRIVER: {driver} WHQL")
         
-        # VRAM (use percentage from telemetry)
-        vram_used = data.get('vramUsed', 0)
-        vram_percent = data.get('vramPercent', 0)
-        self.vram_value_label.setText(f"{vram_used:.1f} / {vram_total:.1f} GB")
-        self.vram_bar.set_value(vram_percent, 100)
-        
-        # Stats
         core_clock = data.get('coreClock', 0)
         self.stat_labels['coreClock'].setText(f"{core_clock} MHz")
         
@@ -376,18 +409,29 @@ class GpuMonitor(VitreosWinFrame):
         temp = data.get('temp', 0)
         self.stat_labels['temp'].setText(f"{temp:.0f} °C")
         
-        # Use status flag from telemetry for color
-        status = data.get('status', 'normal')
-        if status == 'critical':
-            self.stat_labels['temp'].setStyleSheet(f"color: {VITREOS_COLORS['critical_red']};")
-        elif status == 'warning':
-            self.stat_labels['temp'].setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
-        else:
-            self.stat_labels['temp'].setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
+        usage = data.get('usage', 0)
+        self.load_value.setText(f"{usage:.0f}%")
+        self.load_bar.set_value(usage, 100)
+        
+        vram_used = data.get('vramUsed', 0)
+        vram_percent = data.get('vramPercent', 0)
+        self.vram_value.setText(f"{vram_used:.1f} / {vram_total:.1f} GB")
+        self.vram_bar.set_value(vram_percent, 100)
+        self.vram_gauge.set_value(vram_percent, 100, 'purple_dim')
+        
+        bandwidth = data.get('memBandwidth', 0)
+        self.bw_value.setText(f"{bandwidth:.0f} GB/s")
+        self.bw_bar.set_value(bandwidth, 500)
+        
+        fan_speed = data.get('fanSpeed', 0)
+        fan_rpm = int(fan_speed * 30)
+        self.fan_labels['FAN 1'].setText(f"{fan_rpm} RPM")
+        self.fan_labels['FAN 2'].setText(f"{fan_rpm} RPM")
+        self.fan_labels['REAR'].setText(f"{int(fan_rpm * 0.8)} RPM")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PLACEHOLDER MODULES (To be implemented)
+# PLACEHOLDER MODULES
 # ═══════════════════════════════════════════════════════════════════════════
 
 class ThermalCtrl(VitreosWinFrame):
@@ -397,21 +441,16 @@ class ThermalCtrl(VitreosWinFrame):
         self._setup_content()
     
     def _setup_content(self) -> None:
-        """Build thermal monitor layout."""
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(9, 9, 9, 9)  # Reduced by 25%
+        layout.setSpacing(4)  # Reduced by 25%
         
-        # Sensor Matrix Header
-        header = QLabel("SENSOR MATRIX")
-        header.setFont(get_font('mono', FONT_SIZES['label']))
-        header.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
-        layout.addWidget(header)
+        self.status_label = QLabel("SEARCHING...")
+        self.status_label.setFont(get_font('mono', FONT_SIZES['title']))
+        self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+        layout.addWidget(self.status_label)
         
         # CPU Temperature
-        cpu_layout = QVBoxLayout()
-        cpu_layout.setSpacing(4)
-        
         cpu_header = QHBoxLayout()
         cpu_label = QLabel("CPU PACKAGE")
         cpu_label.setFont(get_font('mono', FONT_SIZES['tiny']))
@@ -423,18 +462,12 @@ class ThermalCtrl(VitreosWinFrame):
         self.cpu_temp_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
         self.cpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
         cpu_header.addWidget(self.cpu_temp_label)
+        layout.addLayout(cpu_header)
         
-        cpu_layout.addLayout(cpu_header)
-        
-        self.cpu_temp_bar = VitreosSegmentedBar(segments=22, height=6, color='cyan')
-        cpu_layout.addWidget(self.cpu_temp_bar)
-        
-        layout.addLayout(cpu_layout)
+        self.cpu_temp_bar = VitreosSegmentedBar(segments=24, height=6, color='cyan')
+        layout.addWidget(self.cpu_temp_bar)
         
         # GPU Temperature
-        gpu_layout = QVBoxLayout()
-        gpu_layout.setSpacing(4)
-        
         gpu_header = QHBoxLayout()
         gpu_label = QLabel("GPU CORE")
         gpu_label.setFont(get_font('mono', FONT_SIZES['tiny']))
@@ -446,38 +479,32 @@ class ThermalCtrl(VitreosWinFrame):
         self.gpu_temp_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
         self.gpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
         gpu_header.addWidget(self.gpu_temp_label)
+        layout.addLayout(gpu_header)
         
-        gpu_layout.addLayout(gpu_header)
-        
-        self.gpu_temp_bar = VitreosSegmentedBar(segments=22, height=6, color='warning_orange')
-        gpu_layout.addWidget(self.gpu_temp_bar)
-        
-        layout.addLayout(gpu_layout)
+        self.gpu_temp_bar = VitreosSegmentedBar(segments=24, height=6, color='warning_orange')
+        layout.addWidget(self.gpu_temp_bar)
         
         # Thermal Status Grid
-        status_grid = QGridLayout()
-        status_grid.setSpacing(8)
+        stats_grid = QGridLayout()
+        stats_grid.setSpacing(6)
         
         self.status_labels = {}
         sensors = [
-            ('CPU MAX', 'cpu_max', '°C'),
-            ('GPU MAX', 'gpu_max', '°C'),
-            ('MOBO', 'mobo', '°C'),
-            ('CASE', 'case', '°C'),
+            ('CPU MAX', 'cpu_max', '°C', 'cyan'),
+            ('GPU MAX', 'gpu_max', '°C', 'warning_orange'),
+            ('CPU AVG', 'cpu_avg', '°C', 'text_secondary'),
+            ('GPU AVG', 'gpu_avg', '°C', 'text_secondary'),
         ]
         
-        for i, (label, key, unit) in enumerate(sensors):
-            row = i // 2
-            col = i % 2
-            
+        for i, (label, key, unit, color) in enumerate(sensors):
             sensor_widget = QWidget()
             sensor_widget.setStyleSheet(f"""
                 background: {VITREOS_COLORS['bg_card']};
                 border: 1px solid {VITREOS_COLORS['border_secondary']};
-                padding: 8px;
             """)
             sensor_layout = QVBoxLayout(sensor_widget)
-            sensor_layout.setSpacing(4)
+            sensor_layout.setContentsMargins(6, 6, 6, 6)
+            sensor_layout.setSpacing(2)
             
             sensor_label = QLabel(label)
             sensor_label.setFont(get_font('mono', FONT_SIZES['micro']))
@@ -486,23 +513,29 @@ class ThermalCtrl(VitreosWinFrame):
             sensor_layout.addWidget(sensor_label)
             
             value_label = QLabel(f"0{unit}")
-            value_label.setFont(get_font('mono', FONT_SIZES['value_large']))
-            value_label.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
+            value_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
+            value_label.setStyleSheet(f"color: {VITREOS_COLORS[color]};")
             value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             sensor_layout.addWidget(value_label)
             
             self.status_labels[key] = value_label
-            status_grid.addWidget(sensor_widget, row, col)
+            stats_grid.addWidget(sensor_widget, i // 2, i % 2)
         
-        layout.addLayout(status_grid)
+        layout.addLayout(stats_grid)
         layout.addStretch()
-        
         self.set_content_layout(layout)
     
     def update_data(self, data: Dict[str, Any]) -> None:
-        """Update thermal monitor with sensor data."""
-        # CPU Temperature (from cpu data)
         cpu_temp = data.get('cpuTemp', 0)
+        gpu_temp = data.get('gpuTemp', 0)
+        
+        if cpu_temp > 0 or gpu_temp > 0:
+            self.status_label.setText("ONLINE")
+            self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['green']};")
+        else:
+            self.status_label.setText("OFFLINE")
+            self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+        
         self.cpu_temp_label.setText(f"{cpu_temp:.0f}°C")
         self.cpu_temp_bar.set_value(cpu_temp, 100)
         
@@ -513,8 +546,6 @@ class ThermalCtrl(VitreosWinFrame):
         else:
             self.cpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
         
-        # GPU Temperature (from gpu data)
-        gpu_temp = data.get('gpuTemp', 0)
         self.gpu_temp_label.setText(f"{gpu_temp:.0f}°C")
         self.gpu_temp_bar.set_value(gpu_temp, 100)
         
@@ -525,148 +556,351 @@ class ThermalCtrl(VitreosWinFrame):
         else:
             self.gpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
         
-        # Status grid (use same temps for now)
         self.status_labels['cpu_max'].setText(f"{cpu_temp:.0f}°C")
         self.status_labels['gpu_max'].setText(f"{gpu_temp:.0f}°C")
-        
-        # Placeholder for mobo/case (not in telemetry yet)
-        self.status_labels['mobo'].setText("N/A")
-        self.status_labels['case'].setText("N/A")
+        self.status_labels['cpu_avg'].setText(f"{cpu_temp:.0f}°C")
+        self.status_labels['gpu_avg'].setText(f"{gpu_temp:.0f}°C")
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DRIVE CARD WIDGET - Single physical drive representation (Figma V4)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class DriveCardWidget(QWidget):
+    """Single drive card matching Figma V4 StorageArray DriveRow spec."""
+
+    def __init__(self, drive_type: str, model: str, serial: str,
+                 temp: int, used_gb: float, total_gb: float,
+                 read_speed: float, write_speed: float,
+                 max_read: int, max_write: int,
+                 parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._build(drive_type, model, serial, temp,
+                    used_gb, total_gb, read_speed, write_speed, max_read, max_write)
+
+    def _build(self, drive_type: str, model: str, serial: str,
+               temp: int, used_gb: float, total_gb: float,
+               read_speed: float, write_speed: float,
+               max_read: int, max_write: int) -> None:
+        # Figma: bg #0A0A0A, 1px border #1E1E1E, 2px left border #A855F7
+        self.setStyleSheet("""
+            DriveCardWidget {
+                background: #0A0A0A;
+                border: 1px solid #1E1E1E;
+                border-left: 2px solid #A855F7;
+            }
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(8, 6, 8, 6)
+        root.setSpacing(4)
+
+        # ── Row 1: type badge | model | temp ──────────────────────────────
+        row1 = QHBoxLayout()
+        row1.setSpacing(6)
+
+        type_badge = QLabel(f'[ {drive_type} ]')
+        type_badge.setFont(get_font('mono', FONT_SIZES['micro']))
+        type_badge.setStyleSheet("""
+            color: #A855F7;
+            background: #1A1A1A;
+            border: 1px solid #2A2A2A;
+            padding: 0px 3px;
+        """)
+        row1.addWidget(type_badge)
+
+        model_label = QLabel(model)
+        model_label.setFont(get_font('mono', FONT_SIZES['small']))
+        model_label.setStyleSheet('color: #888888;')
+        row1.addWidget(model_label)
+        row1.addStretch()
+
+        temp_color = '#FF6B00' if temp > 45 else '#A855F7'
+        self.temp_label = QLabel(f'{temp}°C')
+        self.temp_label.setFont(get_font('mono', FONT_SIZES['small']))
+        self.temp_label.setStyleSheet(f'color: {temp_color};')
+        row1.addWidget(self.temp_label)
+        root.addLayout(row1)
+
+        # ── Row 2: serial ─────────────────────────────────────────────────
+        sn_label = QLabel(f'S/N: {serial}')
+        sn_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        sn_label.setStyleSheet('color: #333333;')
+        root.addWidget(sn_label)
+
+        # ── Row 3: capacity bar (purple) ──────────────────────────────────
+        used_pct = (used_gb / total_gb * 100) if total_gb > 0 else 0
+        free_gb  = total_gb - used_gb
+
+        cap_labels = QHBoxLayout()
+        used_lbl = QLabel(f'{used_gb:.0f} GB used')
+        used_lbl.setFont(get_font('mono', FONT_SIZES['micro']))
+        used_lbl.setStyleSheet('color: #444444;')
+        cap_labels.addWidget(used_lbl)
+        cap_labels.addStretch()
+        free_lbl = QLabel(f'{free_gb:.0f} GB free')
+        free_lbl.setFont(get_font('mono', FONT_SIZES['micro']))
+        free_lbl.setStyleSheet('color: #333333;')
+        cap_labels.addWidget(free_lbl)
+        root.addLayout(cap_labels)
+
+        self.cap_bar = VitreosSegmentedBar(segments=20, height=5,
+                                           hex_color='#A855F7', alert_threshold=1.1)
+        self.cap_bar.set_value(used_pct, 100)
+        root.addWidget(self.cap_bar)
+
+        # ── Row 4: read | write bars (50/50 split) ────────────────────────
+        io_row = QHBoxLayout()
+        io_row.setSpacing(8)
+
+        # Left: MAX READ (cyan)
+        read_col = QVBoxLayout()
+        read_col.setSpacing(2)
+        read_hdr = QHBoxLayout()
+        read_lbl = QLabel('MAX READ')
+        read_lbl.setFont(get_font('mono', FONT_SIZES['micro']))
+        read_lbl.setStyleSheet('color: #333333;')
+        read_hdr.addWidget(read_lbl)
+        read_hdr.addStretch()
+        self.read_val = QLabel(f'{max_read} <span style="color:#1E4A5A; font-size:6pt;">MB/s</span>')
+        self.read_val.setFont(get_font('mono', FONT_SIZES['small']))
+        self.read_val.setStyleSheet('color: #06B6D4;')
+        self.read_val.setTextFormat(Qt.TextFormat.RichText)
+        read_hdr.addWidget(self.read_val)
+        read_col.addLayout(read_hdr)
+        self.read_bar = VitreosSegmentedBar(segments=12, height=4,
+                                            hex_color='#06B6D4', alert_threshold=1.1)
+        self.read_bar.set_value(read_speed, 7000)
+        read_col.addWidget(self.read_bar)
+        io_row.addLayout(read_col)
+
+        # Right: MAX WRITE (orange)
+        write_col = QVBoxLayout()
+        write_col.setSpacing(2)
+        write_hdr = QHBoxLayout()
+        write_lbl = QLabel('MAX WRITE')
+        write_lbl.setFont(get_font('mono', FONT_SIZES['micro']))
+        write_lbl.setStyleSheet('color: #333333;')
+        write_hdr.addWidget(write_lbl)
+        write_hdr.addStretch()
+        self.write_val = QLabel(f'{max_write} <span style="color:#4A2500; font-size:6pt;">MB/s</span>')
+        self.write_val.setFont(get_font('mono', FONT_SIZES['small']))
+        self.write_val.setStyleSheet('color: #FF6B00;')
+        self.write_val.setTextFormat(Qt.TextFormat.RichText)
+        write_hdr.addWidget(self.write_val)
+        write_col.addLayout(write_hdr)
+        self.write_bar = VitreosSegmentedBar(segments=12, height=4,
+                                             hex_color='#FF6B00', alert_threshold=1.1)
+        self.write_bar.set_value(write_speed, 7000)
+        write_col.addWidget(self.write_bar)
+        io_row.addLayout(write_col)
+
+        root.addLayout(io_row)
+
+    def refresh(self, temp: int, used_gb: float, total_gb: float,
+                read_speed: float, write_speed: float) -> None:
+        """Update live values without rebuilding the widget."""
+        used_pct   = (used_gb / total_gb * 100) if total_gb > 0 else 0
+        temp_color = '#FF6B00' if temp > 45 else '#A855F7'
+        self.temp_label.setStyleSheet(f'color: {temp_color};')
+        self.temp_label.setText(f'{temp}°C')
+        self.cap_bar.set_value(used_pct, 100)
+        self.read_bar.set_value(read_speed, 7000)
+        self.write_bar.set_value(write_speed, 7000)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STORAGE ARRAY - Figma V4 DISK_ARRAY Module
+# ═══════════════════════════════════════════════════════════════════════════
 
 class StorageArray(VitreosWinFrame):
-    """Storage monitoring widget with drive array."""
+    """DISK_ARRAY module rebuilt to Figma V4 spec."""
+
+    # Static mock drives shown before telemetry arrives
+    _MOCK_DRIVES = [
+        dict(drive_type='NVMe', model='Samsung 990 Pro',  serial='S6EVNX0T841256B',
+             temp=38, used_gb=512,  total_gb=1000, read_speed=6900, write_speed=6200,
+             max_read=6900, max_write=6200),
+        dict(drive_type='NVMe', model='WD Black SN850X', serial='23456F7G8H9I0J1K',
+             temp=41, used_gb=1800, total_gb=2000, read_speed=7000, write_speed=6600,
+             max_read=7000, max_write=6600),
+        dict(drive_type='HDD',  model='Seagate Barracuda', serial='ZA1B2C3D4E5F6G7H',
+             temp=32, used_gb=3200, total_gb=4000, read_speed=180,  write_speed=160,
+             max_read=220,  max_write=200),
+    ]
+
     def __init__(self, parent: Optional[QWidget] = None):
-        super().__init__(title="STORAGE_ARRAY", accent_color="primary_purple", parent=parent)
-        self.drive_widgets: Dict[str, tuple] = {}  # mountpoint -> (label, bar)
+        super().__init__(title='DISK_ARRAY', accent_color='primary_purple', parent=parent)
+        self._drive_cards: Dict[str, DriveCardWidget] = {}
         self._setup_content()
-    
+
     def _setup_content(self) -> None:
-        """Build storage monitor layout."""
-        self.main_layout = QVBoxLayout()
-        self.main_layout.setContentsMargins(12, 12, 12, 12)
-        self.main_layout.setSpacing(8)
-        
-        header = QLabel("DRIVE ARRAY")
-        header.setFont(get_font('mono', FONT_SIZES['label']))
-        header.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
-        self.main_layout.addWidget(header)
-        
-        # Drives will be added dynamically
+        outer = QVBoxLayout()
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(6)
+
+        # ── Header: title + READ/WRITE legend ─────────────────────────────
+        header = QHBoxLayout()
+        title_lbl = QLabel('STORAGE ARRAY')
+        title_lbl.setFont(get_font('mono', FONT_SIZES['title']))
+        title_lbl.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        header.addWidget(title_lbl)
+        header.addStretch()
+
+        read_badge = QLabel('● READ')
+        read_badge.setFont(get_font('mono', FONT_SIZES['micro']))
+        read_badge.setStyleSheet("""
+            color: #06B6D4;
+            background: #0A1A1A;
+            border: 1px solid rgba(6,182,212,0.33);
+            padding: 1px 5px;
+        """)
+        header.addWidget(read_badge)
+
+        write_badge = QLabel('● WRITE')
+        write_badge.setFont(get_font('mono', FONT_SIZES['micro']))
+        write_badge.setStyleSheet("""
+            color: #FF6B00;
+            background: #1A0500;
+            border: 1px solid rgba(255,107,0,0.33);
+            padding: 1px 5px;
+        """)
+        header.addWidget(write_badge)
+        outer.addLayout(header)
+
+        # ── Drive cards ───────────────────────────────────────────────────
         self.drives_layout = QVBoxLayout()
         self.drives_layout.setSpacing(8)
-        self.main_layout.addLayout(self.drives_layout)
-        
-        self.main_layout.addStretch()
-        self.set_content_layout(self.main_layout)
-    
+        outer.addLayout(self.drives_layout)
+
+        # Populate with mock data until telemetry arrives
+        for d in self._MOCK_DRIVES:
+            card = DriveCardWidget(**d)
+            self._drive_cards[d['serial']] = card
+            self.drives_layout.addWidget(card)
+
+        outer.addStretch()
+
+        # ── Footer: RAID status ───────────────────────────────────────────
+        footer = QWidget()
+        footer.setStyleSheet("""
+            background: #0A0A0A;
+            border: 1px solid #1E1E1E;
+            border-left: 2px solid #333333;
+        """)
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(8, 4, 8, 4)
+
+        raid_left = QHBoxLayout()
+        raid_left.setSpacing(4)
+        arrow = QLabel('▷')
+        arrow.setFont(get_font('mono', FONT_SIZES['small']))
+        arrow.setStyleSheet('color: #3A3A3A;')
+        raid_left.addWidget(arrow)
+        raid_text = QLabel('NO RAID CONFIGURED')
+        raid_text.setFont(get_font('mono', FONT_SIZES['small']))
+        raid_text.setStyleSheet('color: #3A3A3A; letter-spacing: 1px;')
+        raid_left.addWidget(raid_text)
+        footer_layout.addLayout(raid_left)
+        footer_layout.addStretch()
+
+        ahci_label = QLabel('AHCI')
+        ahci_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        ahci_label.setStyleSheet('color: #222222;')
+        footer_layout.addWidget(ahci_label)
+
+        outer.addWidget(footer)
+        self.set_content_layout(outer)
+
     def update_data(self, data: Dict[str, Any]) -> None:
-        """Update storage array with drive data."""
         drives = data.get('drives', [])
-        
-        # Create/update drive widgets
+        if not drives:
+            return
+        # Live update: refresh existing cards by mountpoint key
         for drive in drives:
-            mountpoint = drive.get('mountpoint', '/')
-            device = drive.get('device', 'Unknown')
-            used_gb = drive.get('usedGB', 0)
-            total_gb = drive.get('totalGB', 0)
-            percent = drive.get('percent', 0)
-            
-            if mountpoint not in self.drive_widgets:
-                # Create new drive widget
-                drive_layout = QVBoxLayout()
-                drive_layout.setSpacing(4)
-                
-                drive_header = QHBoxLayout()
-                drive_label = QLabel(f"{device} ({mountpoint})")
-                drive_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-                drive_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
-                drive_header.addWidget(drive_label)
-                drive_header.addStretch()
-                
-                usage_label = QLabel(f"{used_gb:.1f} / {total_gb:.1f} GB")
-                usage_label.setFont(get_font('mono', FONT_SIZES['small']))
-                usage_label.setStyleSheet(f"color: {VITREOS_COLORS['primary_purple']};")
-                drive_header.addWidget(usage_label)
-                
-                drive_layout.addLayout(drive_header)
-                
-                drive_bar = VitreosSegmentedBar(segments=22, height=6, color='primary_purple')
-                drive_layout.addWidget(drive_bar)
-                
-                self.drives_layout.addLayout(drive_layout)
-                self.drive_widgets[mountpoint] = (usage_label, drive_bar)
-            else:
-                # Update existing drive widget
-                usage_label, drive_bar = self.drive_widgets[mountpoint]
-                usage_label.setText(f"{used_gb:.1f} / {total_gb:.1f} GB")
-                drive_bar.set_value(percent, 100)
+            key = drive.get('mountpoint', drive.get('device', ''))
+            if key in self._drive_cards:
+                self._drive_cards[key].refresh(
+                    temp=int(drive.get('temp', 0)),
+                    used_gb=drive.get('usedGB', 0),
+                    total_gb=drive.get('totalGB', 1),
+                    read_speed=drive.get('readSpeed', 0),
+                    write_speed=drive.get('writeSpeed', 0),
+                )
 
 
 class MemoryArray(VitreosWinFrame):
-    """Memory monitoring widget with RAM usage."""
+    """Memory monitoring widget with circular gauge."""
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(title="MEMORY_ARRAY", accent_color="purple_dim", parent=parent)
         self._setup_content()
     
     def _setup_content(self) -> None:
-        """Build memory monitor layout."""
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(9, 9, 9, 9)  # Reduced by 25%
+        layout.setSpacing(4)  # Reduced by 25%
         
-        header = QLabel("RAM USAGE")
-        header.setFont(get_font('mono', FONT_SIZES['label']))
-        header.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
-        layout.addWidget(header)
+        # Header with gauge
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
         
-        # Memory Usage Bar
-        mem_layout = QVBoxLayout()
-        mem_layout.setSpacing(4)
+        self.ram_gauge = VitreosCircularGauge(segments=40)
+        header_row.addWidget(self.ram_gauge)
         
-        mem_header = QHBoxLayout()
-        mem_label = QLabel("SYSTEM MEMORY")
-        mem_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-        mem_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
-        mem_header.addWidget(mem_label)
-        mem_header.addStretch()
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(2)
         
-        self.mem_value_label = QLabel("0.0 / 0.0 GB")
-        self.mem_value_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
-        self.mem_value_label.setStyleSheet(f"color: {VITREOS_COLORS['purple_dim']};")
-        mem_header.addWidget(self.mem_value_label)
+        self.status_label = QLabel("SEARCHING...")
+        self.status_label.setFont(get_font('mono', FONT_SIZES['title']))
+        self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+        info_layout.addWidget(self.status_label)
         
-        mem_layout.addLayout(mem_header)
+        self.usage_label = QLabel("0.0 / 0.0 GB")
+        self.usage_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
+        self.usage_label.setStyleSheet(f"color: {VITREOS_COLORS['purple_dim']};")
+        info_layout.addWidget(self.usage_label)
         
-        self.mem_bar = VitreosSegmentedBar(segments=22, height=6, color='purple_dim')
-        mem_layout.addWidget(self.mem_bar)
+        header_row.addLayout(info_layout)
+        header_row.addStretch()
+        layout.addLayout(header_row)
         
-        layout.addLayout(mem_layout)
+        # Main bar
+        bar_header = QHBoxLayout()
+        bar_label = QLabel("SYSTEM MEMORY")
+        bar_label.setFont(get_font('mono', FONT_SIZES['tiny']))
+        bar_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        bar_header.addWidget(bar_label)
+        bar_header.addStretch()
+        self.percent_label = QLabel("0%")
+        self.percent_label.setFont(get_font('mono', FONT_SIZES['small']))
+        self.percent_label.setStyleSheet(f"color: {VITREOS_COLORS['purple_dim']};")
+        bar_header.addWidget(self.percent_label)
+        layout.addLayout(bar_header)
         
-        # Memory Stats Grid
+        self.mem_bar = VitreosSegmentedBar(segments=24, height=6, color='purple_dim')
+        layout.addWidget(self.mem_bar)
+        
+        # Stats grid
         stats_grid = QGridLayout()
-        stats_grid.setSpacing(8)
+        stats_grid.setSpacing(6)
         
         self.stat_labels = {}
         stats = [
-            ('USED', 'used', 'GB'),
-            ('FREE', 'free', 'GB'),
-            ('PERCENT', 'percent', '%'),
-            ('TOTAL', 'total', 'GB'),
+            ('USED', 'used', 'GB', 'purple_dim'),
+            ('FREE', 'free', 'GB', 'cyan'),
+            ('CACHED', 'cached', 'GB', 'text_secondary'),
+            ('AVAILABLE', 'available', 'GB', 'green'),
         ]
         
-        for i, (label, key, unit) in enumerate(stats):
-            row = i // 2
-            col = i % 2
-            
+        for i, (label, key, unit, color) in enumerate(stats):
             stat_widget = QWidget()
             stat_widget.setStyleSheet(f"""
                 background: {VITREOS_COLORS['bg_card']};
                 border: 1px solid {VITREOS_COLORS['border_secondary']};
-                padding: 8px;
             """)
             stat_layout = QVBoxLayout(stat_widget)
-            stat_layout.setSpacing(4)
+            stat_layout.setContentsMargins(6, 6, 6, 6)
+            stat_layout.setSpacing(2)
             
             stat_label = QLabel(label)
             stat_label.setFont(get_font('mono', FONT_SIZES['micro']))
@@ -675,338 +909,165 @@ class MemoryArray(VitreosWinFrame):
             stat_layout.addWidget(stat_label)
             
             value_label = QLabel(f"0 {unit}")
-            value_label.setFont(get_font('mono', FONT_SIZES['value_large']))
-            value_label.setStyleSheet(f"color: {VITREOS_COLORS['purple_dim']};")
+            value_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
+            value_label.setStyleSheet(f"color: {VITREOS_COLORS[color]};")
             value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             stat_layout.addWidget(value_label)
             
             self.stat_labels[key] = value_label
-            stats_grid.addWidget(stat_widget, row, col)
+            stats_grid.addWidget(stat_widget, i // 2, i % 2)
         
         layout.addLayout(stats_grid)
         layout.addStretch()
-        
         self.set_content_layout(layout)
     
     def update_data(self, data: Dict[str, Any]) -> None:
-        """Update memory monitor with RAM data."""
         used_gb = data.get('usedGB', 0)
         total_gb = data.get('totalGB', 0)
         percent = data.get('percent', 0)
-        free_gb = total_gb - used_gb
         
-        # Main bar
-        self.mem_value_label.setText(f"{used_gb:.1f} / {total_gb:.1f} GB")
+        if total_gb > 0:
+            self.status_label.setText("ONLINE")
+            self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['green']};")
+        else:
+            self.status_label.setText("OFFLINE")
+            self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+        
+        self.usage_label.setText(f"{used_gb:.1f} / {total_gb:.1f} GB")
+        self.percent_label.setText(f"{percent:.0f}%")
         self.mem_bar.set_value(percent, 100)
+        self.ram_gauge.set_value(percent, 100, 'purple_dim')
         
-        # Stats grid
+        free_gb = total_gb - used_gb
         self.stat_labels['used'].setText(f"{used_gb:.1f} GB")
         self.stat_labels['free'].setText(f"{free_gb:.1f} GB")
-        self.stat_labels['percent'].setText(f"{percent:.0f}%")
-        self.stat_labels['total'].setText(f"{total_gb:.1f} GB")
+        self.stat_labels['cached'].setText(f"{data.get('cachedGB', 0):.1f} GB")
+        self.stat_labels['available'].setText(f"{data.get('availableGB', free_gb):.1f} GB")
 
 
 class NetInterface(VitreosWinFrame):
-    """Network monitoring widget - networking-only telemetry (no process hogs)."""
+    """Network monitoring widget with barcode signal visualizer."""
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(title="NET_INTERFACE", accent_color="green", parent=parent)
-        self.telemetry_worker: Optional[TelemetryWorker] = None
-        self.download_history: List[float] = [0.0] * 60
-        self.upload_history: List[float] = [0.0] * 60
         self._setup_content()
     
     def _setup_content(self) -> None:
-        """Build optimized network layout (40% top info, 60% waveform)."""
-        from PyQt6.QtWidgets import QComboBox
-        
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(9, 9, 9, 9)  # Reduced by 25%
+        layout.setSpacing(4)  # Reduced by 25%
         
-        # Top 40%: Adapter Info + NIC Matrix
-        top_section = QVBoxLayout()
-        top_section.setSpacing(4)  # Tightened from 8px to 4px
+        # Status header
+        self.status_label = QLabel("SEARCHING...")
+        self.status_label.setFont(get_font('mono', FONT_SIZES['title']))
+        self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+        layout.addWidget(self.status_label)
         
-        # Adapter dropdown
-        adapter_label = QLabel("ACTIVE INTERFACE")
-        adapter_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-        adapter_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
-        top_section.addWidget(adapter_label)
+        # Barcode signal visualizer
+        signal_label = QLabel("SIGNAL STRENGTH")
+        signal_label.setFont(get_font('mono', FONT_SIZES['tiny']))
+        signal_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        layout.addWidget(signal_label)
         
-        self.adapter_combo = QComboBox()
-        self.adapter_combo.setFont(get_font('mono', 8))
-        self.adapter_combo.setStyleSheet(f"""
-            QComboBox {{
+        self.signal_barcode = VitreosBarcode(height=60)
+        layout.addWidget(self.signal_barcode)
+        
+        # Throughput stats
+        stats_grid = QGridLayout()
+        stats_grid.setSpacing(6)
+        
+        self.stat_labels = {}
+        stats = [
+            ('DOWNLOAD', 'download', 'Mbps', 'cyan'),
+            ('UPLOAD', 'upload', 'Mbps', 'warning_orange'),
+            ('LATENCY', 'latency', 'ms', 'green'),
+            ('PACKETS', 'packets', '/s', 'purple_dim'),
+        ]
+        
+        for i, (label, key, unit, color) in enumerate(stats):
+            stat_widget = QWidget()
+            stat_widget.setStyleSheet(f"""
                 background: {VITREOS_COLORS['bg_card']};
-                border: 1px solid {VITREOS_COLORS['border_primary']};
-                padding: 6px;
-                color: {VITREOS_COLORS['green']};;
-            }}
-        """)
-        self.adapter_combo.currentTextChanged.connect(self._on_adapter_changed)
-        top_section.addWidget(self.adapter_combo)
+                border: 1px solid {VITREOS_COLORS['border_secondary']};
+            """)
+            stat_layout = QVBoxLayout(stat_widget)
+            stat_layout.setContentsMargins(6, 6, 6, 6)
+            stat_layout.setSpacing(2)
+            
+            stat_label = QLabel(label)
+            stat_label.setFont(get_font('mono', FONT_SIZES['micro']))
+            stat_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+            stat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            stat_layout.addWidget(stat_label)
+            
+            value_label = QLabel(f"0 {unit}")
+            value_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
+            value_label.setStyleSheet(f"color: {VITREOS_COLORS[color]};")
+            value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            stat_layout.addWidget(value_label)
+            
+            self.stat_labels[key] = value_label
+            stats_grid.addWidget(stat_widget, i // 2, i % 2)
         
-        # NIC Matrix (4x4 grid) - centered with border
-        nic_label = QLabel("NIC MATRIX")
-        nic_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-        nic_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
-        top_section.addWidget(nic_label)
+        layout.addLayout(stats_grid)
         
-        # Matrix container with border and fixed max height
-        nic_container = QWidget()
-        nic_container.setMaximumHeight(120)  # Fixed max height to prevent crushing
-        nic_container.setStyleSheet(f"""
-            background: {VITREOS_COLORS['bg_card']};
-            border: 1px solid {VITREOS_COLORS['border_secondary']};
-        """)
-        nic_container_layout = QVBoxLayout(nic_container)
-        nic_container_layout.setContentsMargins(8, 8, 8, 8)
-        
-        nic_grid = QGridLayout()
-        nic_grid.setSpacing(3)
-        nic_grid.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.nic_widgets: List[QWidget] = []
-        
-        for i in range(16):
-            row, col = i // 4, i % 4
-            nic_cell = NICMicroWaveform()
-            nic_grid.addWidget(nic_cell, row, col)
-            self.nic_widgets.append(nic_cell)
-        
-        nic_container_layout.addLayout(nic_grid)
-        top_section.addWidget(nic_container)
-        layout.addLayout(top_section)
-        
-        # Bottom 60%: Bandwidth Waveform
-        bandwidth_label = QLabel("BANDWIDTH WAVEFORM")
-        bandwidth_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-        bandwidth_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
-        layout.addWidget(bandwidth_label)
-        
-        self.waveform = BandwidthWaveform()
-        self.waveform.setMinimumHeight(180)
-        layout.addWidget(self.waveform, 3)  # Stretch factor 3 for 60% height
-        
-        # Centered readouts - NUCLEAR FIX: No addStretch, perfect centering
-        readouts = QHBoxLayout()
-        readouts.setSpacing(0)  # Remove spacing, let alignment handle it
-        readouts.setContentsMargins(0, 8, 0, 0)
-        readouts.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Center the entire layout
-        
-        # Download
-        dl_layout = QVBoxLayout()
-        dl_layout.setSpacing(2)
-        dl_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
+        # Throughput bars
+        dl_header = QHBoxLayout()
         dl_label = QLabel("DOWNLOAD")
         dl_label.setFont(get_font('mono', FONT_SIZES['tiny']))
         dl_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
-        dl_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dl_label.setFixedWidth(100)  # Fixed width for alignment
-        dl_layout.addWidget(dl_label)
+        dl_header.addWidget(dl_label)
+        dl_header.addStretch()
+        self.dl_value = QLabel("0.00 Mbps")
+        self.dl_value.setFont(get_font('mono', FONT_SIZES['small']))
+        self.dl_value.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
+        dl_header.addWidget(self.dl_value)
+        layout.addLayout(dl_header)
         
-        self.download_value = QLabel("0.00 Mbps")
-        self.download_value.setFont(get_font('mono', 13))
-        self.download_value.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
-        self.download_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.download_value.setFixedWidth(100)
-        dl_layout.addWidget(self.download_value)
-        readouts.addLayout(dl_layout)
+        self.dl_bar = VitreosSegmentedBar(segments=24, height=6, color='cyan')
+        layout.addWidget(self.dl_bar)
         
-        # Upload
-        ul_layout = QVBoxLayout()
-        ul_layout.setSpacing(2)
-        ul_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
+        ul_header = QHBoxLayout()
         ul_label = QLabel("UPLOAD")
         ul_label.setFont(get_font('mono', FONT_SIZES['tiny']))
         ul_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
-        ul_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ul_label.setFixedWidth(100)
-        ul_layout.addWidget(ul_label)
+        ul_header.addWidget(ul_label)
+        ul_header.addStretch()
+        self.ul_value = QLabel("0.00 Mbps")
+        self.ul_value.setFont(get_font('mono', FONT_SIZES['small']))
+        self.ul_value.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
+        ul_header.addWidget(self.ul_value)
+        layout.addLayout(ul_header)
         
-        self.upload_value = QLabel("0.00 Mbps")
-        self.upload_value.setFont(get_font('mono', 13))
-        self.upload_value.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
-        self.upload_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.upload_value.setFixedWidth(100)
-        ul_layout.addWidget(self.upload_value)
-        readouts.addLayout(ul_layout)
+        self.ul_bar = VitreosSegmentedBar(segments=24, height=6, color='warning_orange')
+        layout.addWidget(self.ul_bar)
         
-        # Latency
-        lat_layout = QVBoxLayout()
-        lat_layout.setSpacing(2)
-        lat_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        lat_label = QLabel("LATENCY")
-        lat_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-        lat_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
-        lat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lat_label.setFixedWidth(100)
-        lat_layout.addWidget(lat_label)
-        
-        self.latency_value = QLabel("0 ms")
-        self.latency_value.setFont(get_font('mono', 13))
-        self.latency_value.setStyleSheet(f"color: {VITREOS_COLORS['green']};")
-        self.latency_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.latency_value.setFixedWidth(100)
-        lat_layout.addWidget(self.latency_value)
-        readouts.addLayout(lat_layout)
-        
-        layout.addLayout(readouts)
-        
+        layout.addStretch()
         self.set_content_layout(layout)
     
-    def _on_adapter_changed(self, adapter_name: str) -> None:
-        """Sync adapter change with telemetry worker."""
-        if self.telemetry_worker and adapter_name:
-            self.telemetry_worker.set_active_adapter(adapter_name)
-    
     def update_data(self, data: Dict[str, Any]) -> None:
-        """Update network monitor - networking telemetry only."""
-        # Populate adapter dropdown if empty
-        if self.adapter_combo.count() == 0:
-            interfaces = data.get('interfaces', [])
-            for iface in interfaces:
-                self.adapter_combo.addItem(iface['name'])
-            
-            # Set primary adapter
-            primary = data.get('primaryNic', '')
-            if primary:
-                idx = self.adapter_combo.findText(primary)
-                if idx >= 0:
-                    self.adapter_combo.setCurrentIndex(idx)
+        primary_nic = data.get('primaryNic', 'Unknown')
+        if primary_nic != 'Unknown':
+            self.status_label.setText(f"ONLINE // {primary_nic}")
+            self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['green']};")
+        else:
+            self.status_label.setText("OFFLINE")
+            self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
         
-        # Update NIC matrix
-        interfaces = data.get('interfaces', [])
-        for i, nic_widget in enumerate(self.nic_widgets):
-            if i < len(interfaces):
-                iface = interfaces[i]
-                status = iface.get('status', 'idle')
-                nic_widget.set_status(status)
-            else:
-                nic_widget.set_status('idle')
-        
-        # Update bandwidth
         download = data.get('downloadMbps', 0)
         upload = data.get('uploadMbps', 0)
-        
-        self.download_value.setText(f"{download:.2f} Mbps")
-        self.upload_value.setText(f"{upload:.2f} Mbps")
-        
-        # Update waveform history
-        self.download_history.append(download)
-        self.upload_history.append(upload)
-        if len(self.download_history) > 60:
-            self.download_history.pop(0)
-            self.upload_history.pop(0)
-        
-        self.waveform.set_data(self.download_history, self.upload_history)
-        
-        # Update latency
         latency = data.get('latency', 0)
-        self.latency_value.setText(f"{latency:.0f} ms")
         
-        # Signal Silencing: No network hogs processing
-
-
-class NICMicroWaveform(QWidget):
-    """Micro waveform for NIC matrix (4x4 grid)."""
-    
-    def __init__(self, parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.status = 'idle'
-        self.setFixedSize(40, 30)
-    
-    def set_status(self, status: str) -> None:
-        """Set NIC status: 'active' (cyan) or 'idle' (amber)."""
-        self.status = status
-        self.update()
-    
-    def paintEvent(self, event) -> None:
-        """Draw micro waveform."""
-        from PyQt6.QtGui import QPainter, QPen, QColor
+        self.dl_value.setText(f"{download:.2f} Mbps")
+        self.ul_value.setText(f"{upload:.2f} Mbps")
         
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.dl_bar.set_value(download, 100)
+        self.ul_bar.set_value(upload, 100)
         
-        # Background
-        painter.fillRect(0, 0, self.width(), self.height(), QColor(VITREOS_COLORS['bg_card']))
-        
-        # Border
-        painter.setPen(QPen(QColor(VITREOS_COLORS['border_secondary']), 1))
-        painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
-        
-        # Waveform color
-        if self.status == 'active':
-            color = QColor(VITREOS_COLORS['cyan'])
-        else:
-            color = QColor(VITREOS_COLORS['warning_orange'])
-        
-        painter.setPen(QPen(color, 1))
-        
-        # Draw simple waveform pattern
-        import random
-        random.seed(id(self))  # Consistent pattern per widget
-        
-        for x in range(0, self.width(), 2):
-            y = self.height() // 2 + random.randint(-8, 8)
-            painter.drawLine(x, self.height() // 2, x, y)
-
-
-class BandwidthWaveform(QWidget):
-    """Dual-colored bandwidth waveform graph."""
-    
-    def __init__(self, parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.download_data: List[float] = [0.0] * 60
-        self.upload_data: List[float] = [0.0] * 60
-    
-    def set_data(self, download: List[float], upload: List[float]) -> None:
-        """Update waveform data."""
-        self.download_data = download[-60:]
-        self.upload_data = upload[-60:]
-        self.update()
-    
-    def paintEvent(self, event) -> None:
-        """Draw dual-colored waveform."""
-        from PyQt6.QtGui import QPainter, QPen, QColor
-        
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        width = self.width()
-        height = self.height()
-        
-        # Background
-        painter.fillRect(0, 0, width, height, QColor(VITREOS_COLORS['bg_card']))
-        
-        # Grid lines
-        painter.setPen(QPen(QColor(VITREOS_COLORS['border_secondary']), 1))
-        for i in range(0, height, 20):
-            painter.drawLine(0, i, width, i)
-        
-        # Find max for scaling
-        max_val = max(max(self.download_data + self.upload_data, default=1), 1)
-        
-        # Draw download (cyan)
-        painter.setPen(QPen(QColor(VITREOS_COLORS['cyan']), 2))
-        for i in range(1, len(self.download_data)):
-            x1 = int((i - 1) * width / 60)
-            y1 = int(height - (self.download_data[i - 1] / max_val * height))
-            x2 = int(i * width / 60)
-            y2 = int(height - (self.download_data[i] / max_val * height))
-            painter.drawLine(x1, y1, x2, y2)
-        
-        # Draw upload (orange)
-        painter.setPen(QPen(QColor(VITREOS_COLORS['warning_orange']), 2))
-        for i in range(1, len(self.upload_data)):
-            x1 = int((i - 1) * width / 60)
-            y1 = int(height - (self.upload_data[i - 1] / max_val * height))
-            x2 = int(i * width / 60)
-            y2 = int(height - (self.upload_data[i] / max_val * height))
-            painter.drawLine(x1, y1, x2, y2)
+        self.stat_labels['download'].setText(f"{download:.2f} Mbps")
+        self.stat_labels['upload'].setText(f"{upload:.2f} Mbps")
+        self.stat_labels['latency'].setText(f"{latency:.0f} ms")
+        self.stat_labels['packets'].setText(f"{data.get('packetsPerSec', 0):.0f} /s")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1021,5 +1082,3 @@ __all__ = [
     'MemoryArray',
     'NetInterface',
 ]
-
-

@@ -6,13 +6,15 @@ Main Application Window with Figma-Accurate Layout
 import sys
 from typing import Optional, Dict, Any
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QHBoxLayout, QGridLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy, QSizeGrip
+    QApplication, QMainWindow, QWidget, QHBoxLayout, QGridLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy, QSizeGrip, QFrame
 )
 from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QMouseEvent
 
 from src.ui.vitreos_theme import VITREOS_COLORS, VITREOS_STYLESHEET, initialize_theme, get_font, FONT_SIZES
 from src.ui.vitreos_widgets import SystemPulseLog, VitreosWinFrame
+from src.ui.vitreos_sidebar import VitreosSidebar
+from src.ui.vitreos_effects import CRTOverlay, GlitchTransition
 from src.core.vitreos_telemetry import TelemetryWorker
 from src.core.vitreos_presence import PresenceWorker
 from src.core.vitreos_bridge import translate_to_legacy_format
@@ -33,21 +35,30 @@ except ImportError as e:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# NAVIGATION BAR - 10-Tab System
+# GLOBAL HEADER - 100% Width Navigation Bar
 # ═══════════════════════════════════════════════════════════════════════════
 
-class VitreosNavBar(QWidget):
+class GlobalHeader(QWidget):
     """
-    10-tab navigation bar with active state highlighting.
-    Matches legacy_pyqt tab structure.
+    Fixed 32px global header with Etched Meridian architecture.
+    Tabs are compartmentalized 3-sided boxes with dynamic reactive accents.
     """
     
-    tab_changed = pyqtSignal(str)  # Emits tab name when clicked
-    debug_toggled = pyqtSignal(bool)  # Emits debug mode state
+    tab_changed = pyqtSignal(str)
+    debug_toggled = pyqtSignal(bool)
     
-    TABS = [
-        'VITALS', 'NETWORK', 'PROCESSES', 'GPU PRO', 'SECURITY',
-        'STORAGE', 'TWEAKS', 'CONSOLE', 'REMOTE', 'SETTINGS'
+    # Tab configuration with accent colors
+    TAB_CONFIG = [
+        ('VITALS', 'primary_purple'),
+        ('NETWORK', 'green'),
+        ('PROCESSES', 'cyan'),
+        ('GPU PRO', 'warning_orange'),
+        ('SECURITY', 'critical_red'),
+        ('STORAGE', 'purple_dim'),
+        ('TWEAKS', 'primary_purple'),
+        ('CONSOLE', 'green'),
+        ('REMOTE', 'cyan'),
+        ('SETTINGS', 'text_secondary'),
     ]
     
     def __init__(self, parent: Optional[QWidget] = None):
@@ -59,34 +70,63 @@ class VitreosNavBar(QWidget):
         self._setup_ui()
     
     def _setup_ui(self) -> None:
-        """Build navigation bar layout with window controls."""
+        """Build global header with Etched Meridian architecture."""
         self.setFixedHeight(32)
         self.setStyleSheet(f"""
-            VitreosNavBar {{
-                background: {VITREOS_COLORS['bg_titlebar']};
-                border-bottom: 1px solid {VITREOS_COLORS['border_primary']};
+            GlobalHeader {{
+                background: {VITREOS_COLORS['bg_secondary']};
             }}
         """)
         
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 0, 8, 0)
-        layout.setSpacing(4)
+        layout.setContentsMargins(0, 0, 0, 0)  # Zero-gap enforcement
+        layout.setSpacing(0)  # Zero-gap enforcement
         
-        # Create tab buttons
-        for tab_name in self.TABS:
+        # Left: Branding compartment (fixed width)
+        branding_widget = QWidget()
+        branding_widget.setFixedWidth(180)
+        branding_widget.setStyleSheet(f"""
+            background: {VITREOS_COLORS['bg_secondary']};
+            border-right: 1px solid {VITREOS_COLORS['border_primary']};
+        """)
+        branding_layout = QHBoxLayout(branding_widget)
+        branding_layout.setContentsMargins(12, 0, 12, 0)
+        branding_layout.setSpacing(6)
+        
+        vitreos_label = QLabel("VITREOS")
+        vitreos_label.setFont(get_font('mono', FONT_SIZES['title']))
+        vitreos_label.setStyleSheet(f"""
+            color: {VITREOS_COLORS['text_bright']};
+            font-weight: 100;
+            letter-spacing: 2px;
+        """)
+        branding_layout.addWidget(vitreos_label)
+        
+        version_label = QLabel("v2.1")
+        version_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        version_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+        branding_layout.addWidget(version_label)
+        branding_layout.addStretch()
+        
+        layout.addWidget(branding_widget)
+        
+        # Center: Compartmentalized tabs (3-sided boxes)
+        for tab_name, accent_color in self.TAB_CONFIG:
             btn = QLabel(tab_name)
-            btn.setFont(get_font('mono', FONT_SIZES['label']))
+            btn.setFont(get_font('mono', FONT_SIZES['tiny']))
             btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            btn.setFixedHeight(28)
-            btn.setMinimumWidth(80)
+            btn.setFixedHeight(31)  # 31px to sit flush on Global Meridian
+            btn.setMinimumWidth(70)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             
-            # Proper event handler binding
+            # Store accent color as property
+            btn.setProperty('accent_color', accent_color)
+            
             def make_handler(name: str):
                 def handler(e) -> None:
                     self._on_tab_clicked(name)
                 return handler
-            btn.mousePressEvent = make_handler(tab_name)  # type: ignore[method-assign]
+            btn.mousePressEvent = make_handler(tab_name)
             
             self.tab_buttons[tab_name] = btn
             layout.addWidget(btn)
@@ -95,10 +135,32 @@ class VitreosNavBar(QWidget):
         
         layout.addStretch()
         
-        # Debug toggle button (RADAR icon)
+        # Right: System tray compartment
+        tray_widget = QWidget()
+        tray_widget.setStyleSheet(f"""
+            background: {VITREOS_COLORS['bg_secondary']};
+            border-left: 1px solid {VITREOS_COLORS['border_primary']};
+        """)
+        tray_layout = QHBoxLayout(tray_widget)
+        tray_layout.setContentsMargins(12, 0, 12, 0)
+        tray_layout.setSpacing(8)
+        
+        # Micro-clock
+        self.clock_label = QLabel()
+        self.clock_label.setFont(get_font('mono', FONT_SIZES['tiny']))
+        self.clock_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+        tray_layout.addWidget(self.clock_label)
+        
+        # Start clock timer
+        self.clock_timer = QTimer(self)
+        self.clock_timer.timeout.connect(self._update_clock)
+        self.clock_timer.start(1000)
+        self._update_clock()
+        
+        # Debug toggle
         self.debug_btn = QPushButton("◉")
-        self.debug_btn.setFixedSize(24, 24)
-        self.debug_btn.setFont(get_font('mono', 12))
+        self.debug_btn.setFixedSize(16, 16)
+        self.debug_btn.setFont(get_font('mono', 8))
         self.debug_btn.setCheckable(True)
         self.debug_btn.setStyleSheet(f"""
             QPushButton {{
@@ -118,66 +180,83 @@ class VitreosNavBar(QWidget):
             }}
         """)
         self.debug_btn.clicked.connect(self._on_debug_toggled)
-        layout.addWidget(self.debug_btn)
+        tray_layout.addWidget(self.debug_btn)
         
-        # Window controls (Minimize + Close)
-        min_btn = QPushButton("_")
-        min_btn.setFixedSize(24, 24)
-        min_btn.setFont(get_font('mono', FONT_SIZES['label']))
-        min_btn.setStyleSheet(f"""
-            QPushButton {{
+        # Window controls (5x5px empty micro-squares)
+        min_square = QLabel()
+        min_square.setFixedSize(5, 5)
+        min_square.setCursor(Qt.CursorShape.PointingHandCursor)
+        min_square.setStyleSheet(f"""
+            QLabel {{
                 background: {VITREOS_COLORS['bg_card']};
                 border: 1px solid {VITREOS_COLORS['border_primary']};
-                color: {VITREOS_COLORS['text_secondary']};
-            }}
-            QPushButton:hover {{
-                background: {VITREOS_COLORS['border_primary']};
-                color: {VITREOS_COLORS['primary_purple']};
-                border: 1px solid {VITREOS_COLORS['primary_purple']};
             }}
         """)
-        min_btn.clicked.connect(self._on_minimize)
-        layout.addWidget(min_btn)
-        
-        close_btn = QPushButton("×")
-        close_btn.setFixedSize(24, 24)
-        close_btn.setFont(get_font('mono', 14))
-        close_btn.setStyleSheet(f"""
-            QPushButton {{
+        min_square.enterEvent = lambda e: min_square.setStyleSheet(f"""
+            QLabel {{
+                background: {VITREOS_COLORS['purple_dim']};
+                border: 1px solid {VITREOS_COLORS['purple_dim']};
+            }}
+        """)
+        min_square.leaveEvent = lambda e: min_square.setStyleSheet(f"""
+            QLabel {{
                 background: {VITREOS_COLORS['bg_card']};
                 border: 1px solid {VITREOS_COLORS['border_primary']};
-                color: {VITREOS_COLORS['critical_red']};
             }}
-            QPushButton:hover {{
+        """)
+        min_square.mousePressEvent = lambda e: self._on_minimize()
+        tray_layout.addWidget(min_square)
+        
+        close_square = QLabel()
+        close_square.setFixedSize(5, 5)
+        close_square.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_square.setStyleSheet(f"""
+            QLabel {{
+                background: {VITREOS_COLORS['bg_card']};
+                border: 1px solid {VITREOS_COLORS['border_primary']};
+            }}
+        """)
+        close_square.enterEvent = lambda e: close_square.setStyleSheet(f"""
+            QLabel {{
                 background: {VITREOS_COLORS['critical_red']};
-                color: {VITREOS_COLORS['text_primary']};
                 border: 1px solid {VITREOS_COLORS['critical_red']};
             }}
         """)
-        close_btn.clicked.connect(self._on_close)
-        layout.addWidget(close_btn)
+        close_square.leaveEvent = lambda e: close_square.setStyleSheet(f"""
+            QLabel {{
+                background: {VITREOS_COLORS['bg_card']};
+                border: 1px solid {VITREOS_COLORS['border_primary']};
+            }}
+        """)
+        close_square.mousePressEvent = lambda e: self._on_close()
+        tray_layout.addWidget(close_square)
+        
+        layout.addWidget(tray_widget)
+    
+    def _update_clock(self) -> None:
+        """Update micro-clock display."""
+        from datetime import datetime
+        now = datetime.now()
+        time_str = now.strftime("%H:%M:%S")
+        self.clock_label.setText(time_str)
     
     def _on_minimize(self) -> None:
-        """Minimize window."""
         win = self.window()
         if win:
             win.showMinimized()
     
     def _on_close(self) -> None:
-        """Close window."""
         win = self.window()
         if win:
             win.close()
     
     def _on_debug_toggled(self) -> None:
-        """Handle debug toggle button click."""
         is_checked = self.debug_btn.isChecked()
         self.debug_toggled.emit(is_checked)
     
     def mousePressEvent(self, event) -> None:
         """Enable OS-native window dragging."""
         if event.button() == Qt.MouseButton.LeftButton:
-            # Use OS-native drag to prevent click-through
             win = self.window()
             if win:
                 handle = win.windowHandle()
@@ -186,55 +265,61 @@ class VitreosNavBar(QWidget):
             event.accept()
     
     def _on_tab_clicked(self, tab_name: str) -> None:
-        """Handle tab click."""
         if tab_name != self.active_tab:
             self.active_tab = tab_name
             
-            # Update all tab styles
-            for name in self.TABS:
+            # Update all tab styles with dynamic accents
+            for name, _ in self.TAB_CONFIG:
                 self._update_tab_style(name)
             
-            # Debug logging
             tab_file = tab_name.lower().replace(' ', '_')
             log_msg = f"[NAV] Switching to Tab: {tab_name} | Logic Path: src/tabs/tab_{tab_file}.py"
             print(log_msg)
             
-            # Send to Console if it's the active tab
             win = self.window()
             if win and hasattr(win, 'send_to_console'):
-                win.send_to_console(log_msg)  # type: ignore[attr-defined]
+                win.send_to_console(log_msg)
             
-            # Emit signal
             self.tab_changed.emit(tab_name)
     
     def _update_tab_style(self, tab_name: str) -> None:
-        """Update tab button styling based on active state."""
+        """Update tab with dynamic reactive HUD accents (3-sided box)."""
         btn = self.tab_buttons[tab_name]
         is_active = (tab_name == self.active_tab)
+        accent_color = btn.property('accent_color')
         
         if is_active:
+            # Active: 3-sided box (Top, Left, Right) with dynamic accent color + 2px neon underline
             btn.setStyleSheet(f"""
                 QLabel {{
-                    color: {VITREOS_COLORS['primary_purple']};
-                    background: {VITREOS_COLORS['bg_card']};
-                    border: 1px solid {VITREOS_COLORS['primary_purple']};
-                    padding: 4px 12px;
+                    color: {VITREOS_COLORS[accent_color]};
+                    background: {VITREOS_COLORS['bg_secondary']};
+                    border-top: 1px solid {VITREOS_COLORS[accent_color]};
+                    border-left: 1px solid {VITREOS_COLORS[accent_color]};
+                    border-right: 1px solid {VITREOS_COLORS[accent_color]};
+                    border-bottom: 2px solid {VITREOS_COLORS[accent_color]};
+                    padding: 6px 8px 0px 8px;
                     letter-spacing: 1px;
                 }}
             """)
         else:
+            # Inactive: 3-sided box with dimmed borders
             btn.setStyleSheet(f"""
                 QLabel {{
-                    color: {VITREOS_COLORS['text_secondary']};
-                    background: transparent;
-                    border: 1px solid transparent;
-                    padding: 4px 12px;
+                    color: {VITREOS_COLORS['text_darker']};
+                    background: {VITREOS_COLORS['bg_secondary']};
+                    border-top: 1px solid {VITREOS_COLORS['border_dim']};
+                    border-left: 1px solid {VITREOS_COLORS['border_dim']};
+                    border-right: 1px solid {VITREOS_COLORS['border_dim']};
+                    border-bottom: none;
+                    padding: 6px 8px 2px 8px;
                     letter-spacing: 1px;
                 }}
                 QLabel:hover {{
-                    color: {VITREOS_COLORS['text_primary']};
-                    background: {VITREOS_COLORS['bg_primary']};
-                    border: 1px solid {VITREOS_COLORS['border_secondary']};
+                    color: {VITREOS_COLORS['text_secondary']};
+                    border-top: 1px solid {VITREOS_COLORS['border_primary']};
+                    border-left: 1px solid {VITREOS_COLORS['border_primary']};
+                    border-right: 1px solid {VITREOS_COLORS['border_primary']};
                 }}
             """)
 
@@ -255,11 +340,10 @@ class VitreosMainWindow(QMainWindow):
         # Window properties
         self.setWindowTitle("VITREOS // SYSTEM SENTINEL v2.1")
         self.setGeometry(100, 100, 1400, 900)
-        self.setMinimumSize(1200, 800)  # Minimum size, but resizable
+        self.setMinimumSize(1200, 800)
         
-        # Frameless window with transparency
+        # Frameless window (SOLID STATE - No transparency)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
         # Drag support
         self.drag_position: Optional[QPoint] = None
@@ -290,32 +374,44 @@ class VitreosMainWindow(QMainWindow):
         print("[VITREOS] Main window initialized")
     
     def _setup_ui(self) -> None:
-        """Build the main window layout."""
-        # Central widget with Liquid Glass background
+        """Build the main window layout with Master Axis Intersection."""
+        # Central widget with solid matte background
         central = QWidget()
         central.setObjectName("CentralWidget")
         self.setCentralWidget(central)
         
-        # Main vertical layout: NavBar + Content
+        # Main vertical layout: GlobalHeader + Content (ZERO SPACING FOR T-BONE)
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setSpacing(0)  # Critical: Zero-gap enforcement for Global Meridian
         
-        # Top: Navigation bar
-        self.navbar = VitreosNavBar()
-        self.navbar.tab_changed.connect(self._on_tab_changed)
-        self.navbar.debug_toggled.connect(self._on_debug_toggled)
-        main_layout.addWidget(self.navbar)
+        # Top: Global Header
+        self.header = GlobalHeader()
+        self.header.tab_changed.connect(self._on_tab_changed)
+        self.header.debug_toggled.connect(self._on_debug_toggled)
+        main_layout.addWidget(self.header)
         
-        # Bottom: Horizontal layout (Sidebar + Dashboard)
+        # The Global Meridian (Explicit 1px horizontal line)
+        self.global_meridian = QFrame()
+        self.global_meridian.setFixedHeight(1)
+        self.global_meridian.setStyleSheet(f"background-color: {VITREOS_COLORS['border_primary']}; border: none;")
+        main_layout.addWidget(self.global_meridian)
+        
+        # Bottom: Horizontal layout (Sidebar + Dashboard) - ZERO SPACING FOR T-BONE
         content_widget = QWidget()
         content_layout = QHBoxLayout(content_widget)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(0)
+        content_layout.setSpacing(0)  # Critical: Zero-gap enforcement for Sidebar Divider
         
-        # Left: SystemPulseLog (232px fixed width)
-        self.sidebar = SystemPulseLog()
+        # Left: Tactical Sidebar
+        self.sidebar = VitreosSidebar()
         content_layout.addWidget(self.sidebar)
+        
+        # The Sidebar Divider (Explicit 1px vertical line)
+        self.sidebar_divider = QFrame()
+        self.sidebar_divider.setFixedWidth(1)
+        self.sidebar_divider.setStyleSheet(f"background-color: {VITREOS_COLORS['border_primary']}; border: none;")
+        content_layout.addWidget(self.sidebar_divider)
         
         # Right: Dashboard grid
         dashboard_widget = QWidget()
@@ -325,6 +421,16 @@ class VitreosMainWindow(QMainWindow):
         content_layout.addWidget(dashboard_widget, 1)
         
         main_layout.addWidget(content_widget, 1)
+        
+        # CRT Post-Processing Overlay
+        self.crt_overlay = CRTOverlay(central)
+        self.crt_overlay.setGeometry(0, 0, self.width(), self.height())
+        self.crt_overlay.raise_()
+        
+        # Glitch Transition Overlay
+        self.glitch_overlay = GlitchTransition(central)
+        self.glitch_overlay.setGeometry(0, 0, self.width(), self.height())
+        self.glitch_overlay.raise_()
         
         # Add resize grip in bottom-right corner
         self.size_grip = QSizeGrip(central)
@@ -343,72 +449,65 @@ class VitreosMainWindow(QMainWindow):
     
     def _create_dashboard_grid(self) -> QGridLayout:
         """
-        Create 2x3 grid layout for monitoring modules.
-        Fluid scaling with minimum size constraints.
+        Create 3x2 Strategic Grid for Mission Control aesthetic.
         
-        Layout (Re-ordered for tactical density):
-        Row 0: [GpuMonitor] [CpuMonitor] [ThermalCtrl]
-        Row 1: [StorageArray] [MemoryArray] [NetInterface]
+        Layout:
+        Row 0: [GPU_MONITOR] [CPU_MONITOR] [MEMORY_ARRAY]
+        Row 1: [NET_INTERFACE] [THERMAL_CTRL] [STORAGE_ARRAY]
         """
         grid = QGridLayout()
         grid.setContentsMargins(8, 8, 8, 8)
         grid.setSpacing(8)
-        grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         
-        # Row 0 (Top)
+        # Row 0
         self.gpu_module = GpuMonitor()
-        self.gpu_module.setMinimumSize(380, 420)
-        self.gpu_module.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.gpu_module.setMinimumSize(360, 400)
+        self.gpu_module.setMaximumHeight(450)
         grid.addWidget(self.gpu_module, 0, 0)
         
         self.cpu_module = CpuMonitor()
-        self.cpu_module.setMinimumSize(380, 420)
-        self.cpu_module.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.cpu_module.setMinimumSize(360, 400)
+        self.cpu_module.setMaximumHeight(450)
         grid.addWidget(self.cpu_module, 0, 1)
         
-        self.thermal_module = ThermalCtrl()
-        self.thermal_module.setMinimumSize(380, 420)
-        self.thermal_module.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        grid.addWidget(self.thermal_module, 0, 2)
-        
-        # Row 1 (Bottom)
-        self.storage_module = StorageArray()
-        self.storage_module.setMinimumSize(380, 420)
-        self.storage_module.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        grid.addWidget(self.storage_module, 1, 0)
-        
         self.memory_module = MemoryArray()
-        self.memory_module.setMinimumSize(380, 420)
-        self.memory_module.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        grid.addWidget(self.memory_module, 1, 1)
+        self.memory_module.setMinimumSize(360, 400)
+        self.memory_module.setMaximumHeight(450)
+        grid.addWidget(self.memory_module, 0, 2)
         
+        # Row 1
         self.network_module = NetInterface()
-        self.network_module.setMinimumSize(380, 420)
-        self.network_module.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        grid.addWidget(self.network_module, 1, 2)
+        self.network_module.setMinimumSize(360, 400)
+        self.network_module.setMaximumHeight(450)
+        grid.addWidget(self.network_module, 1, 0)
         
-        # Equal column/row stretching for fluid scaling on ultrawide
+        self.thermal_module = ThermalCtrl()
+        self.thermal_module.setMinimumSize(360, 400)
+        self.thermal_module.setMaximumHeight(450)
+        grid.addWidget(self.thermal_module, 1, 1)
+        
+        self.storage_module = StorageArray()
+        self.storage_module.setMinimumSize(360, 400)
+        self.storage_module.setMaximumHeight(450)
+        grid.addWidget(self.storage_module, 1, 2)
+        
+        # Equal stretching
         for col in range(3):
-            grid.setColumnStretch(col, 1)  # Equal stretch for all columns
+            grid.setColumnStretch(col, 1)
         for row in range(2):
-            grid.setRowStretch(row, 1)  # Equal stretch for all rows
-        
-        # Add extra stretch columns/rows to prevent clustering
-        grid.setColumnStretch(3, 0)  # No stretch beyond grid
-        grid.setRowStretch(2, 0)  # No stretch beyond grid
+            grid.setRowStretch(row, 1)
         
         return grid
     
     def _apply_styling(self) -> None:
-        """Apply Liquid Glass styling to main window."""
+        """Apply RESTRAINED styling with solid matte background."""
         self.setStyleSheet(f"""
             #CentralWidget {{
-                background: rgba(13, 13, 13, 0.85);
-                border: 2px solid {VITREOS_COLORS['border_primary']};
-                border-radius: 0px;
+                background: {VITREOS_COLORS['bg_secondary']};
+                border: 1px solid {VITREOS_COLORS['border_primary']};
             }}
             #DashboardWidget {{
-                background: transparent;
+                background: {VITREOS_COLORS['bg_secondary']};
             }}
         """)
     
@@ -614,6 +713,14 @@ class VitreosMainWindow(QMainWindow):
         if 'CONSOLE' in self.tab_cache and hasattr(self.tab_cache['CONSOLE'], 'write_app_event'):
             self.tab_cache['CONSOLE'].write_app_event(message)  # type: ignore[attr-defined]
     
+    def resizeEvent(self, event) -> None:
+        """Handle window resize to update overlay positions."""
+        super().resizeEvent(event)
+        if hasattr(self, 'crt_overlay'):
+            self.crt_overlay.setGeometry(0, 0, self.width(), self.height())
+        if hasattr(self, 'glitch_overlay'):
+            self.glitch_overlay.setGeometry(0, 0, self.width(), self.height())
+    
     def _on_tab_changed(self, tab_name: str) -> None:
         """
         Handle tab navigation changes - swap dashboard content.
@@ -622,6 +729,10 @@ class VitreosMainWindow(QMainWindow):
         Args:
             tab_name: Name of the selected tab
         """
+        # Trigger glitch transition
+        if hasattr(self, 'glitch_overlay'):
+            self.glitch_overlay.trigger_glitch()
+        
         # Verbose Mode: Log user interaction (yellow)
         if self.verbose_mode:
             self.send_to_console(f"[INPUT] User switched to {tab_name} tab")

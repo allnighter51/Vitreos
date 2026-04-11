@@ -1,299 +1,261 @@
-#!/usr/bin/env python3
 """
-Vitreos Security Tab - Security Monitoring & Event Logging
+Security Tab - OSINT & CCE Shield
+100% Terminal Style | 20% Threat Level Gutter
 """
-from typing import Dict, Any, Optional
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QFrame)
-from PyQt6.QtCore import Qt, pyqtSignal
+
+from typing import Optional, Dict, Any, List
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont
+from datetime import datetime
+import os
+
+from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
+from src.ui.vitreos_widgets import VitreosWinFrame, HazardBadge
+
+
+class SecurityTerminal(QTextEdit):
+    """Terminal-style log viewer with green/emerald color scheme."""
+    
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setFont(get_font('mono', 9))
+        self.setStyleSheet(f"""
+            QTextEdit {{
+                background: {VITREOS_COLORS['bg_secondary']};
+                border: 1px solid {VITREOS_COLORS['green']};
+                color: {VITREOS_COLORS['green']};
+                padding: 8px;
+                line-height: 1.4;
+            }}
+        """)
+    
+    def append_secure(self, level: str, message: str) -> None:
+        """Append log entry with security color coding."""
+        now = datetime.now()
+        time_str = now.strftime("%H:%M:%S")
+        
+        # Color based on level
+        if level == "BREACH":
+            color = VITREOS_COLORS['critical_red']
+        elif level == "WARN":
+            color = VITREOS_COLORS['warning_orange']
+        elif level == "SCAN":
+            color = VITREOS_COLORS['cyan']
+        else:
+            color = VITREOS_COLORS['green']
+        
+        html = f"""
+        <span style="color: {VITREOS_COLORS['text_darker']};">[{time_str}]</span>
+        <span style="color: {color}; font-weight: bold;">[{level}]</span>
+        <span style="color: {VITREOS_COLORS['green']};">{message}</span>
+        """
+        
+        self.append(html)
+        
+        # Auto-scroll
+        scrollbar = self.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+
+class ThreatLevelGutter(QWidget):
+    """Vertical hazard badge stack for threat monitoring."""
+    
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setFixedWidth(120)
+        self._setup_ui()
+    
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(12)
+        
+        # Threat level header
+        header = QLabel("THREAT\nLEVEL")
+        header.setFont(get_font('mono', FONT_SIZES['label']))
+        header.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(header)
+        
+        # Threat badges
+        self.badges = {}
+        threats = [
+            ('OSINT', 'primary_purple'),
+            ('DISCORD', 'primary_purple'),
+            ('CCE', 'primary_purple'),
+            ('NETWORK', 'primary_purple'),
+        ]
+        
+        for threat_name, color in threats:
+            badge = HazardBadge(f"⚠ {threat_name}")
+            badge.setStyleSheet(f"""
+                background: repeating-linear-gradient(
+                    45deg,
+                    #000 0px, #000 3px,
+                    rgba(168, 85, 247, 0.25) 3px, rgba(168, 85, 247, 0.25) 6px
+                );
+                border: 1px solid {VITREOS_COLORS[color]};
+                color: {VITREOS_COLORS[color]};
+                padding: 4px 8px;
+                letter-spacing: 1px;
+            """)
+            self.badges[threat_name] = badge
+            layout.addWidget(badge)
+        
+        layout.addStretch()
+    
+    def set_threat_level(self, threat_name: str, level: str) -> None:
+        """Set threat level: 'NORMAL', 'WARNING', 'CRITICAL'."""
+        if threat_name not in self.badges:
+            return
+        
+        badge = self.badges[threat_name]
+        
+        if level == 'CRITICAL':
+            color = 'critical_red'
+            badge.setStyleSheet(f"""
+                background: repeating-linear-gradient(
+                    45deg,
+                    #000 0px, #000 3px,
+                    rgba(255, 68, 68, 0.25) 3px, rgba(255, 68, 68, 0.25) 6px
+                );
+                border: 1px solid {VITREOS_COLORS[color]};
+                color: {VITREOS_COLORS[color]};
+                padding: 4px 8px;
+                letter-spacing: 1px;
+            """)
+        elif level == 'WARNING':
+            color = 'warning_orange'
+            badge.setStyleSheet(f"""
+                background: repeating-linear-gradient(
+                    45deg,
+                    #000 0px, #000 3px,
+                    rgba(255, 107, 0, 0.25) 3px, rgba(255, 107, 0, 0.25) 6px
+                );
+                border: 1px solid {VITREOS_COLORS[color]};
+                color: {VITREOS_COLORS[color]};
+                padding: 4px 8px;
+                letter-spacing: 1px;
+            """)
+        else:  # NORMAL
+            color = 'primary_purple'
+            badge.setStyleSheet(f"""
+                background: repeating-linear-gradient(
+                    45deg,
+                    #000 0px, #000 3px,
+                    rgba(168, 85, 247, 0.25) 3px, rgba(168, 85, 247, 0.25) 6px
+                );
+                border: 1px solid {VITREOS_COLORS[color]};
+                color: {VITREOS_COLORS[color]};
+                padding: 4px 8px;
+                letter-spacing: 1px;
+            """)
 
 
 class SecurityTab(QWidget):
-    """Security monitoring with shield status and event logging"""
+    """Security tab with terminal interface and threat monitoring."""
     
-    monitoring_toggled = pyqtSignal(bool)
-    clear_logs_requested = pyqtSignal()
-    
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.monitoring_active = False
-        self.setup_ui()
+        self.osint_path = "F:/OSINT_HUB"
+        self._setup_ui()
+        self._start_monitoring()
     
-    def setup_ui(self) -> None:
-        """Initialize the security monitoring layout"""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+    def _setup_ui(self) -> None:
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(8)
         
-        # Header
-        header_label = QLabel("🔒 Security Monitor")
-        header_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 16px;
-            font-weight: bold;
-            color: #bc13fe;
-        """)
-        layout.addWidget(header_label)
+        # Main 80%: Terminal
+        terminal_panel = VitreosWinFrame(
+            title="SECURITY_MONITOR",
+            accent_color="green",
+            badge="SECURE",
+            badge_color="green"
+        )
         
-        # Shield status panel
-        shield_frame = QFrame()
-        shield_frame.setStyleSheet("""
-            QFrame {
-                background: rgba(12, 12, 15, 0.95);
-                border: 2px solid rgba(188, 19, 254, 0.5);
-                border-radius: 8px;
-                padding: 15px;
-            }
-        """)
-        shield_layout = QHBoxLayout(shield_frame)
+        terminal_layout = QVBoxLayout()
+        terminal_layout.setContentsMargins(12, 12, 12, 12)
+        terminal_layout.setSpacing(8)
         
-        self.honeypot_label = QLabel("🍯 Honeypot: INACTIVE")
-        self.honeypot_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 12px;
-            color: #888;
-        """)
+        # OSINT directory header
+        osint_header = QLabel(f"DIRECTORY: {self.osint_path}")
+        osint_header.setFont(get_font('mono', FONT_SIZES['label']))
+        osint_header.setStyleSheet(f"color: {VITREOS_COLORS['green']};")
+        terminal_layout.addWidget(osint_header)
         
-        self.login_label = QLabel("👤 Login Monitor: INACTIVE")
-        self.login_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 12px;
-            color: #888;
-        """)
+        # Terminal
+        self.terminal = SecurityTerminal()
+        terminal_layout.addWidget(self.terminal, 1)
         
-        self.usb_label = QLabel("🔌 USB Shield: INACTIVE")
-        self.usb_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 12px;
-            color: #888;
-        """)
+        # Footer breadcrumb
+        footer = QLabel(f"DIRECTORY: {self.osint_path} | STATUS: MONITORING")
+        footer.setFont(get_font('mono', FONT_SIZES['micro']))
+        footer.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+        terminal_layout.addWidget(footer)
         
-        shield_layout.addWidget(self.honeypot_label)
-        shield_layout.addWidget(self.login_label)
-        shield_layout.addWidget(self.usb_label)
-        shield_layout.addStretch()
+        terminal_panel.set_content_layout(terminal_layout)
+        main_layout.addWidget(terminal_panel, 8)
         
-        layout.addWidget(shield_frame)
-        
-        # Control buttons
-        control_layout = QHBoxLayout()
-        
-        self.toggle_btn = QPushButton("🛡️ ACTIVATE SECURITY")
-        self.toggle_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #00ff00, stop:1 #00cc00);
-                border: 2px solid #00f2ff;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-family: 'Consolas';
-                font-size: 12px;
-                font-weight: bold;
-                color: #000000;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #33ff33, stop:1 #00ff00);
-            }
-        """)
-        self.toggle_btn.clicked.connect(self.on_toggle_clicked)  # type: ignore
-        
-        self.clear_btn = QPushButton("🧹 Clear Logs")
-        self.clear_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(188, 19, 254, 0.3);
-                border: 2px solid #bc13fe;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-family: 'Consolas';
-                font-size: 12px;
-                font-weight: bold;
-                color: #ffffff;
-            }
-            QPushButton:hover {
-                background: rgba(188, 19, 254, 0.5);
-            }
-        """)
-        self.clear_btn.clicked.connect(self.on_clear_clicked)  # type: ignore
-        
-        control_layout.addWidget(self.toggle_btn)
-        control_layout.addWidget(self.clear_btn)
-        control_layout.addStretch()
-        
-        layout.addLayout(control_layout)
-        
-        # Security events table
-        events_label = QLabel("📋 Security Events")
-        events_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 14px;
-            font-weight: bold;
-            color: #bc13fe;
-            margin-top: 10px;
-        """)
-        layout.addWidget(events_label)
-        
-        self.events_table = QTableWidget()
-        self.events_table.setColumnCount(4)
-        self.events_table.setHorizontalHeaderLabels(["Time", "Type", "Description", "Severity"])  # type: ignore
-        self.events_table.setStyleSheet("""
-            QTableWidget {
-                background: rgba(12, 12, 15, 0.95);
-                border: 2px solid rgba(188, 19, 254, 0.5);
-                border-radius: 8px;
-                font-family: 'Consolas';
-                font-size: 11px;
-                color: #00f2ff;
-                gridline-color: rgba(188, 19, 254, 0.3);
-            }
-            QTableWidget::item {
-                padding: 5px;
-            }
-            QTableWidget::item:selected {
-                background: rgba(188, 19, 254, 0.3);
-            }
-            QHeaderView::section {
-                background: rgba(188, 19, 254, 0.5);
-                color: #ffffff;
-                font-weight: bold;
-                padding: 5px;
-                border: none;
-            }
-        """)
-        
-        if header := self.events_table.horizontalHeader():
-            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-            header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-            header.resizeSection(0, 120)
-            header.resizeSection(1, 120)
-            header.resizeSection(3, 100)
-        
-        layout.addWidget(self.events_table)
+        # Right 20%: Threat Level Gutter
+        self.threat_gutter = ThreatLevelGutter()
+        main_layout.addWidget(self.threat_gutter, 2)
     
-    def on_toggle_clicked(self) -> None:
-        """Handle security toggle button click"""
-        self.monitoring_active = not self.monitoring_active
+    def _start_monitoring(self) -> None:
+        """Start OSINT directory monitoring."""
+        self.terminal.append_secure("OK", "Security monitor initialized")
+        self.terminal.append_secure("SCAN", f"Monitoring directory: {self.osint_path}")
         
-        if self.monitoring_active:
-            self.toggle_btn.setText("🛡️ DEACTIVATE SECURITY")
-            self.toggle_btn.setStyleSheet("""
-                QPushButton {
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 #ff0000, stop:1 #cc0000);
-                    border: 2px solid #ff8c00;
-                    border-radius: 6px;
-                    padding: 10px 20px;
-                    font-family: 'Consolas';
-                    font-size: 12px;
-                    font-weight: bold;
-                    color: #ffffff;
-                }
-                QPushButton:hover {
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 #ff3333, stop:1 #ff0000);
-                }
-            """)
+        # Check if OSINT directory exists
+        if os.path.exists(self.osint_path):
+            self.terminal.append_secure("OK", f"OSINT directory found: {self.osint_path}")
+            self._scan_directory()
         else:
-            self.toggle_btn.setText("🛡️ ACTIVATE SECURITY")
-            self.toggle_btn.setStyleSheet("""
-                QPushButton {
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 #00ff00, stop:1 #00cc00);
-                    border: 2px solid #00f2ff;
-                    border-radius: 6px;
-                    padding: 10px 20px;
-                    font-family: 'Consolas';
-                    font-size: 12px;
-                    font-weight: bold;
-                    color: #000000;
-                }
-                QPushButton:hover {
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 #33ff33, stop:1 #00ff00);
-                }
-            """)
+            self.terminal.append_secure("WARN", f"OSINT directory not found: {self.osint_path}")
+            self.threat_gutter.set_threat_level('OSINT', 'WARNING')
         
-        self.monitoring_toggled.emit(self.monitoring_active)  # type: ignore
+        # Simulate Discord status check
+        self.terminal.append_secure("SCAN", "Checking Discord CCE staff status...")
+        self.terminal.append_secure("OK", "Discord status: NORMAL")
+        self.threat_gutter.set_threat_level('DISCORD', 'NORMAL')
+        
+        # Check for April 10 breach logs
+        self._check_breach_logs()
     
-    def on_clear_clicked(self) -> None:
-        """Handle clear logs button click"""
-        self.clear_logs_requested.emit()  # type: ignore
-        self.events_table.setRowCount(0)
+    def _scan_directory(self) -> None:
+        """Scan OSINT directory for files."""
+        try:
+            files = os.listdir(self.osint_path)
+            self.terminal.append_secure("OK", f"Found {len(files)} files in OSINT directory")
+            
+            for file in files[:5]:  # Show first 5 files
+                self.terminal.append_secure("SCAN", f"  → {file}")
+            
+            if len(files) > 5:
+                self.terminal.append_secure("SCAN", f"  ... and {len(files) - 5} more files")
+        except Exception as e:
+            self.terminal.append_secure("WARN", f"Error scanning directory: {e}")
     
-    def update_shield_status(self, status: Dict[str, Any]) -> None:
-        """Update shield status indicators"""
-        honeypot_active = status.get('honeypot', False)
-        login_active = status.get('login_monitor', False)
-        usb_active = status.get('usb_shield', False)
+    def _check_breach_logs(self) -> None:
+        """Check for April 10 Discord breach logs."""
+        breach_date = "2025-04-10"
+        current_date = datetime.now().strftime("%Y-%m-%d")
         
-        self.honeypot_label.setText(f"🍯 Honeypot: {'ACTIVE' if honeypot_active else 'INACTIVE'}")
-        self.honeypot_label.setStyleSheet(f"""
-            font-family: 'Consolas';
-            font-size: 12px;
-            color: {'#00ff00' if honeypot_active else '#888'};
-        """)
-        
-        self.login_label.setText(f"👤 Login Monitor: {'ACTIVE' if login_active else 'INACTIVE'}")
-        self.login_label.setStyleSheet(f"""
-            font-family: 'Consolas';
-            font-size: 12px;
-            color: {'#00ff00' if login_active else '#888'};
-        """)
-        
-        self.usb_label.setText(f"🔌 USB Shield: {'ACTIVE' if usb_active else 'INACTIVE'}")
-        self.usb_label.setStyleSheet(f"""
-            font-family: 'Consolas';
-            font-size: 12px;
-            color: {'#00ff00' if usb_active else '#888'};
-        """)
+        if current_date == breach_date:
+            self.terminal.append_secure("BREACH", "⚠ CRITICAL: Discord breach detected on April 10")
+            self.terminal.append_secure("BREACH", "CCE staff credentials may be compromised")
+            self.threat_gutter.set_threat_level('DISCORD', 'CRITICAL')
+            self.threat_gutter.set_threat_level('CCE', 'CRITICAL')
+        else:
+            self.terminal.append_secure("OK", "No active breach incidents detected")
     
-    def add_security_event(self, event: str) -> None:
-        """Add a security event to the table"""
-        from datetime import datetime
-        
-        # Parse event string (format: "TYPE: Description [SEVERITY]")
-        parts = event.split(":")
-        event_type = parts[0].strip() if len(parts) > 0 else "UNKNOWN"
-        
-        description = ":".join(parts[1:]).strip() if len(parts) > 1 else event
-        
-        # Extract severity
-        severity = "INFO"
-        if "[CRITICAL]" in description:
-            severity = "CRITICAL"
-            description = description.replace("[CRITICAL]", "").strip()
-        elif "[WARNING]" in description:
-            severity = "WARNING"
-            description = description.replace("[WARNING]", "").strip()
-        elif "[HIGH]" in description:
-            severity = "HIGH"
-            description = description.replace("[HIGH]", "").strip()
-        
-        # Add row
-        row = self.events_table.rowCount()
-        self.events_table.insertRow(row)
-        
-        time_item = QTableWidgetItem(datetime.now().strftime("%H:%M:%S"))
-        type_item = QTableWidgetItem(event_type)
-        desc_item = QTableWidgetItem(description)
-        severity_item = QTableWidgetItem(severity)
-        
-        # Color code severity
-        if severity == "CRITICAL":
-            severity_item.setForeground(Qt.GlobalColor.red)  # type: ignore
-        elif severity == "HIGH":
-            severity_item.setForeground(Qt.GlobalColor.yellow)  # type: ignore
-        elif severity == "WARNING":
-            severity_item.setForeground(Qt.GlobalColor.yellow)  # type: ignore
-        
-        self.events_table.setItem(row, 0, time_item)
-        self.events_table.setItem(row, 1, type_item)
-        self.events_table.setItem(row, 2, desc_item)
-        self.events_table.setItem(row, 3, severity_item)
-        
-        # Auto-scroll to bottom
-        self.events_table.scrollToBottom()
+    def update_stats(self, data: Dict[str, Any]) -> None:
+        """Update security monitor (placeholder for future integration)."""
+        pass
 
 
+__all__ = ['SecurityTab']

@@ -8,10 +8,174 @@ from PyQt6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, Q
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QLinearGradient, QPaintEvent, QFont
 from datetime import datetime
+import math
 
 from src.ui.vitreos_theme import (
     VITREOS_COLORS, FONT_SIZES, get_color, get_font, hex_to_qcolor
 )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CUSTOM QPAINTER WIDGETS - Figma V4 Components
+# ═══════════════════════════════════════════════════════════════════════════
+
+class VitreosCircularGauge(QWidget):
+    """40-segment donut chart for VRAM/disk usage."""
+    
+    def __init__(self, segments: int = 40, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.value = 0.0
+        self.max_value = 100.0
+        self.segments = segments
+        self.color_name = 'purple_dim'
+        self.setFixedSize(80, 80)
+    
+    def set_value(self, value: float, max_value: float = 100.0, color: str = 'purple_dim') -> None:
+        self.value = min(value, max_value)
+        self.max_value = max_value
+        self.color_name = color
+        self.update()
+    
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        center_x = self.width() / 2
+        center_y = self.height() / 2
+        outer_radius = min(center_x, center_y) - 4
+        inner_radius = outer_radius - 8
+        
+        filled_segments = int((self.value / self.max_value) * self.segments)
+        angle_per_segment = 360 / self.segments
+        
+        for i in range(self.segments):
+            start_angle = -90 + (i * angle_per_segment)
+            
+            if i < filled_segments:
+                color = get_color(self.color_name)
+            else:
+                color = get_color('segment_off')
+            
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(color))
+            
+            rect = QRectF(center_x - outer_radius, center_y - outer_radius,
+                         outer_radius * 2, outer_radius * 2)
+            painter.drawPie(rect, int(start_angle * 16), int(angle_per_segment * 16))
+            
+            inner_rect = QRectF(center_x - inner_radius, center_y - inner_radius,
+                               inner_radius * 2, inner_radius * 2)
+            painter.setBrush(QBrush(get_color('bg_primary')))
+            painter.drawEllipse(inner_rect)
+
+
+class VitreosBarcode(QWidget):
+    """Deterministic vertical line pattern for tech-UI aesthetic."""
+    
+    def __init__(self, height: int = 40, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setFixedHeight(height)
+        self.setMinimumWidth(50)
+    
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        
+        painter.fillRect(0, 0, width, height, get_color('bg_card'))
+        
+        pattern = [3, 1, 2, 1, 4, 1, 1, 1, 3, 1, 2, 1, 5, 1, 1, 1, 3, 1, 4, 1]
+        x = 0
+        
+        for i, bar_width in enumerate(pattern * (width // 50 + 1)):
+            if x >= width:
+                break
+            
+            if i % 2 == 0:
+                painter.fillRect(x, 0, bar_width, height, get_color('border_primary'))
+            
+            x += bar_width
+
+
+class HazardBadge(QLabel):
+    """Hazard warning badge with striped background."""
+    
+    def __init__(self, text: str = "⚠ ALERT", parent: Optional[QWidget] = None):
+        super().__init__(text, parent)
+        self.setFont(get_font('mono', FONT_SIZES['micro']))
+        self.setStyleSheet(f"""
+            background: repeating-linear-gradient(
+                45deg,
+                #000 0px, #000 3px,
+                rgba(255, 68, 68, 0.25) 3px, rgba(255, 68, 68, 0.25) 6px
+            );
+            border: 1px solid {VITREOS_COLORS['critical_red']};
+            color: {VITREOS_COLORS['critical_red']};
+            padding: 2px 6px;
+            letter-spacing: 1px;
+        """)
+
+
+class OCBadge(QLabel):
+    """Overclocking badge with orange/black diagonal hazard stripes."""
+    
+    def __init__(self, text: str = "OC", parent: Optional[QWidget] = None):
+        super().__init__(text, parent)
+        self.setFont(get_font('mono', FONT_SIZES['micro']))
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet(f"""
+            background: repeating-linear-gradient(
+                45deg,
+                #000 0px, #000 3px,
+                {VITREOS_COLORS['warning_orange']} 3px, {VITREOS_COLORS['warning_orange']} 6px
+            );
+            border: 1px solid {VITREOS_COLORS['warning_orange']};
+            color: {VITREOS_COLORS['text_primary']};
+            padding: 1px 4px;
+            letter-spacing: 1px;
+            font-weight: bold;
+        """)
+
+
+class NeonSwitch(QWidget):
+    """Custom neon toggle switch for Tweaks tab."""
+    
+    toggled = pyqtSignal(bool)
+    
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.checked = False
+        self.setFixedSize(40, 20)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+    
+    def mousePressEvent(self, event) -> None:
+        self.checked = not self.checked
+        self.toggled.emit(self.checked)
+        self.update()
+    
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Background track
+        if self.checked:
+            bg_color = get_color('primary_purple', 100)
+        else:
+            bg_color = get_color('bg_card')
+        
+        painter.setBrush(QBrush(bg_color))
+        painter.setPen(QPen(get_color('border_primary'), 1))
+        painter.drawRoundedRect(0, 0, 40, 20, 10, 10)
+        
+        # Thumb
+        thumb_x = 22 if self.checked else 2
+        thumb_color = get_color('primary_purple') if self.checked else get_color('text_dim')
+        
+        painter.setBrush(QBrush(thumb_color))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(thumb_x, 2, 16, 16)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -30,6 +194,7 @@ class VitreosSegmentedBar(QWidget):
         height: int = 6,
         gap: int = 2,
         color: str = 'primary_purple',
+        hex_color: Optional[str] = None,
         alert_threshold: float = 0.8,
         parent: Optional[QWidget] = None
     ):
@@ -39,6 +204,7 @@ class VitreosSegmentedBar(QWidget):
         self.bar_height = height
         self.gap = gap
         self.color_name = color
+        self.hex_color = hex_color  # Direct hex override
         self.alert_threshold = alert_threshold
         self.value = 0.0
         self.max_value = 100.0
@@ -88,21 +254,22 @@ class VitreosSegmentedBar(QWidget):
             rect = QRectF(x, 0, segment_width, self.bar_height)
             
             if i < filled_segments:
-                # Active segment
+                # Active segment — use hex_color override if provided
                 if alert_zone:
                     color = get_color('warning_orange')
-                    glow_color = get_color('warning_orange', 136)  # 0x88 alpha
+                    glow_color = get_color('warning_orange', 136)
+                elif self.hex_color:
+                    color = QColor(self.hex_color)
+                    glow_color = QColor(self.hex_color)
+                    glow_color.setAlpha(136)
                 else:
                     color = get_color(self.color_name)
                     glow_color = get_color(self.color_name, 136)
                 
                 painter.fillRect(rect, color)
-                
-                # Glow effect (reduced intensity from Figma: 4px)
                 painter.setPen(QPen(glow_color, 0))
                 painter.drawRect(rect)
             else:
-                # Inactive segment
                 painter.fillRect(rect, get_color('segment_off'))
 
 
@@ -231,38 +398,38 @@ class VitreosWinFrame(QFrame):
         layout.addWidget(self.content_widget)
     
     def _create_title_bar(self) -> QWidget:
-        """Create the 24px title bar with indicators and controls."""
+        """Create the 18px title bar with indicators and controls (REDUCED HEIGHT)."""
         title_bar = QWidget()
-        title_bar.setFixedHeight(24)
+        title_bar.setFixedHeight(18)  # Reduced from 24px to 18px
         title_bar.setObjectName("TitleBar")
         
         layout = QHBoxLayout(title_bar)
-        layout.setContentsMargins(8, 0, 4, 0)
-        layout.setSpacing(8)
+        layout.setContentsMargins(6, 0, 3, 0)  # Reduced padding
+        layout.setSpacing(4)  # Reduced spacing
         
         # Left side: Indicators + Icon + Title + Badge
         left_layout = QHBoxLayout()
-        left_layout.setSpacing(6)
+        left_layout.setSpacing(4)  # Reduced spacing
         
-        # Indicator dots
+        # Indicator dots (micro-square style: 5x5 pixels)
         indicator_widget = QWidget()
-        indicator_widget.setFixedSize(16, 6)
+        indicator_widget.setFixedSize(12, 5)
         indicator_layout = QHBoxLayout(indicator_widget)
         indicator_layout.setContentsMargins(0, 0, 0, 0)
         indicator_layout.setSpacing(2)
         
-        # Active dot
+        # Active dot (5x5 square)
         active_dot = QLabel()
-        active_dot.setFixedSize(6, 6)
+        active_dot.setFixedSize(5, 5)
         active_dot.setStyleSheet(f"""
             background: {VITREOS_COLORS[self.accent_color_name]};
             border-radius: 0px;
         """)
         indicator_layout.addWidget(active_dot)
         
-        # Inactive dot
+        # Inactive dot (5x5 square)
         inactive_dot = QLabel()
-        inactive_dot.setFixedSize(6, 6)
+        inactive_dot.setFixedSize(5, 5)
         inactive_dot.setStyleSheet(f"background: {VITREOS_COLORS['text_darker']}; border-radius: 0px;")
         indicator_layout.addWidget(inactive_dot)
         
@@ -270,23 +437,23 @@ class VitreosWinFrame(QFrame):
         
         # Icon
         icon_label = QLabel("▶")
-        icon_label.setFont(get_font('mono', FONT_SIZES['small']))
+        icon_label.setFont(get_font('mono', FONT_SIZES['tiny']))  # Smaller icon
         icon_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
         left_layout.addWidget(icon_label)
         
         # Title
         title_label = QLabel(self.title.upper())
-        title_label.setFont(get_font('mono', FONT_SIZES['label']))
+        title_label.setFont(get_font('mono', FONT_SIZES['small']))  # Reduced from label to small
         title_label.setStyleSheet(f"""
             color: {VITREOS_COLORS[self.accent_color_name]};
-            letter-spacing: 1.2px;
+            letter-spacing: 1px;
         """)
         left_layout.addWidget(title_label)
         
         # Badge (if provided)
         if self.badge:
             badge_label = QLabel(self.badge)
-            badge_label.setFont(get_font('mono', FONT_SIZES['tiny']))
+            badge_label.setFont(get_font('mono', FONT_SIZES['micro']))  # Reduced from tiny to micro
             badge_label.setStyleSheet(f"""
                 background: repeating-linear-gradient(
                     45deg,
@@ -295,7 +462,7 @@ class VitreosWinFrame(QFrame):
                 );
                 border: 1px solid {VITREOS_COLORS[self.badge_color_name]};
                 color: {VITREOS_COLORS[self.badge_color_name]};
-                padding: 1px 5px;
+                padding: 0px 4px;
                 letter-spacing: 1px;
             """)
             left_layout.addWidget(badge_label)
@@ -303,11 +470,11 @@ class VitreosWinFrame(QFrame):
         layout.addLayout(left_layout)
         layout.addStretch()
         
-        # Right side: Aesthetic window controls (non-functional)
+        # Right side: Aesthetic window controls (micro-square style: 5x5 pixels)
         # Minimize glyph
         self.min_label = QLabel("_")
-        self.min_label.setFont(get_font('mono', 9))
-        self.min_label.setFixedSize(14, 14)
+        self.min_label.setFont(get_font('mono', 7))
+        self.min_label.setFixedSize(5, 5)  # Micro-square
         self.min_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.min_label.setStyleSheet(f"""
             QLabel {{
@@ -333,8 +500,8 @@ class VitreosWinFrame(QFrame):
         
         # Close glyph
         self.close_label = QLabel("×")
-        self.close_label.setFont(get_font('mono', 9))
-        self.close_label.setFixedSize(14, 14)
+        self.close_label.setFont(get_font('mono', 7))
+        self.close_label.setFixedSize(5, 5)  # Micro-square
         self.close_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.close_label.setStyleSheet(f"""
             QLabel {{
@@ -361,18 +528,22 @@ class VitreosWinFrame(QFrame):
         return title_bar
     
     def _apply_styling(self) -> None:
-        """Apply Liquid Glass styling to frame."""
+        """Apply RESTRAINED styling with thin borders to frame."""
+        # Use dimmed purple for active modules, #333333 for inactive
+        border_color = VITREOS_COLORS['border_active']  # Dimmed purple
+        
         self.setStyleSheet(f"""
             VitreosWinFrame {{
                 background: {VITREOS_COLORS['bg_primary']};
-                border: 1px solid {VITREOS_COLORS['border_primary']};
+                border: 1px solid {border_color};
             }}
             #TitleBar {{
                 background: {VITREOS_COLORS['bg_titlebar']};
-                border-bottom: 1px solid {VITREOS_COLORS['border_primary']};
+                border-bottom: 1px solid {border_color};
             }}
             #ContentArea {{
                 background: {VITREOS_COLORS['bg_primary']};
+                border: none;
             }}
         """)
     
@@ -485,11 +656,11 @@ class SystemPulseLog(QWidget):
         bottom_bar = self._create_bottom_bar()
         layout.addWidget(bottom_bar)
         
-        # Apply sidebar styling
+        # Apply sidebar styling (SOLID STATE)
         self.setStyleSheet(f"""
             SystemPulseLog {{
-                background: #0D0D0D;
-                border-right: 1px solid {VITREOS_COLORS['primary_purple']};
+                background: {VITREOS_COLORS['bg_secondary']};
+                border-right: 2px solid {VITREOS_COLORS['primary_purple']};
             }}
         """)
     
@@ -535,18 +706,46 @@ class SystemPulseLog(QWidget):
         logo_widget.setStyleSheet(f"border-bottom: 1px solid {VITREOS_COLORS['border_secondary']};")
         
         layout = QVBoxLayout(logo_widget)
-        layout.setContentsMargins(12, 12, 12, 12)  # Reduced padding
-        layout.setSpacing(6)  # Reduced spacing
+        layout.setContentsMargins(8, 8, 8, 8)  # Reduced padding by 25%
+        layout.setSpacing(4)  # Reduced spacing by 25%
         
-        # VITREOS logo
+        # VITREOS logo with chromatic aberration
+        logo_container = QWidget()
+        logo_layout = QVBoxLayout(logo_container)
+        logo_layout.setContentsMargins(0, 0, 0, 0)
+        logo_layout.setSpacing(0)
+        
+        # Red channel (offset -1px)
+        logo_red = QLabel("VITREOS")
+        logo_red.setFont(get_font('display', 36))
+        logo_red.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_red.setStyleSheet(f"""
+            color: rgba(255, 0, 0, 0.3);
+            letter-spacing: 3px;
+            position: absolute;
+        """)
+        
+        # Main logo
         logo = QLabel("VITREOS")
-        logo.setFont(get_font('display', 36))  # Reduced from 44pt
+        logo.setFont(get_font('display', 36))
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo.setStyleSheet(f"""
             color: {VITREOS_COLORS['primary_purple']};
             letter-spacing: 3px;
         """)
-        layout.addWidget(logo)
+        
+        # Blue channel (offset +1px)
+        logo_blue = QLabel("VITREOS")
+        logo_blue.setFont(get_font('display', 36))
+        logo_blue.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_blue.setStyleSheet(f"""
+            color: rgba(0, 0, 255, 0.3);
+            letter-spacing: 3px;
+            position: absolute;
+        """)
+        
+        logo_layout.addWidget(logo)
+        layout.addWidget(logo_container)
         
         # Subtitle
         subtitle = QLabel("── HARDWARE MONITOR v3.0 ──")
@@ -698,6 +897,12 @@ __all__ = [
     'VitreosVerticalBar',
     'VitreosWinFrame',
     'SystemPulseLog',
+    'VitreosSidebar',
+    'VitreosCircularGauge',
+    'VitreosBarcode',
+    'HazardBadge',
+    'OCBadge',
+    'NeonSwitch',
 ]
 
 

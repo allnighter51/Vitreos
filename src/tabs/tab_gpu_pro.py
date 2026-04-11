@@ -1,198 +1,304 @@
-#!/usr/bin/env python3
 """
-Vitreos GPU Pro Tab - Advanced NVIDIA GPU Monitoring
+GPU Pro Tab - Overclocker's Hub
+70% Control Panel | 30% Thermal Density Map
 """
-from typing import Optional
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
-                             QLabel, QSlider, QPushButton, QProgressBar)
+
+from typing import Optional, Dict, Any
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider
 from PyQt6.QtCore import Qt, pyqtSignal
-from src.ui.vitreos_core_ui import LiquidGlassCard
-from src.core.vitreos_workers import GPUTelemetry
+from PyQt6.QtGui import QPainter, QColor, QPen
+
+from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
+from src.ui.vitreos_widgets import VitreosWinFrame, VitreosBarcode, HazardBadge
+
+
+class NeonSlider(QWidget):
+    """High-fidelity slider with phosphor glow effect."""
+    
+    valueChanged = pyqtSignal(int)
+    
+    def __init__(self, min_val: int = -200, max_val: int = 200, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.min_val = min_val
+        self.max_val = max_val
+        self.value = 0
+        self.setFixedHeight(40)
+        self.setMinimumWidth(300)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+    
+    def set_value(self, value: int) -> None:
+        self.value = max(self.min_val, min(self.max_val, value))
+        self.update()
+        self.valueChanged.emit(self.value)
+    
+    def mousePressEvent(self, event) -> None:
+        self._update_from_mouse(event.pos().x())
+    
+    def mouseMoveEvent(self, event) -> None:
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            self._update_from_mouse(event.pos().x())
+    
+    def _update_from_mouse(self, x: int) -> None:
+        width = self.width()
+        ratio = max(0, min(1, x / width))
+        new_value = int(self.min_val + ratio * (self.max_val - self.min_val))
+        self.set_value(new_value)
+    
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        
+        # Background track
+        track_y = height // 2 - 2
+        painter.fillRect(0, track_y, width, 4, get_color('bg_card'))
+        
+        # Filled track with phosphor glow
+        ratio = (self.value - self.min_val) / (self.max_val - self.min_val)
+        filled_width = int(width * ratio)
+        
+        # Glow effect (3 layers)
+        for i in range(3):
+            alpha = 80 - (i * 20)
+            glow_height = 4 + (i * 2)
+            glow_y = track_y - i
+            painter.fillRect(0, glow_y, filled_width, glow_height, get_color('primary_purple', alpha))
+        
+        # Main track
+        painter.fillRect(0, track_y, filled_width, 4, get_color('primary_purple'))
+        
+        # Thumb
+        thumb_x = filled_width - 6
+        thumb_y = height // 2 - 8
+        painter.fillRect(thumb_x, thumb_y, 12, 16, get_color('primary_purple'))
+        
+        # Thumb glow
+        painter.setPen(QPen(get_color('purple_glow', 150), 2))
+        painter.drawRect(thumb_x - 2, thumb_y - 2, 16, 20)
+
+
+class ThermalDensityBar(QWidget):
+    """Vertical barcode that changes color based on temperature."""
+    
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.temp = 0
+        self.setFixedWidth(40)
+        self.setMinimumHeight(60)
+    
+    def set_temp(self, temp: float) -> None:
+        self.temp = temp
+        self.update()
+    
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        
+        # Determine color based on temp
+        if self.temp > 85:
+            color = get_color('critical_red')
+        elif self.temp > 75:
+            color = get_color('warning_orange')
+        elif self.temp > 50:
+            color = get_color('cyan')
+        else:
+            color = get_color('text_dim')
+        
+        # Draw vertical bars
+        pattern = [3, 2, 4, 2, 3, 2, 5, 2]
+        y = 0
+        for i, bar_height in enumerate(pattern * (height // 30 + 1)):
+            if y >= height:
+                break
+            
+            if i % 2 == 0:
+                painter.fillRect(0, y, width, bar_height, color)
+            
+            y += bar_height
 
 
 class GPUProTab(QWidget):
-    """Advanced GPU monitoring with NVML telemetry"""
+    """GPU Pro tab with 70/30 asymmetric layout."""
     
-    fan_speed_changed = pyqtSignal(int)
-    
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setup_ui()
+        self._setup_ui()
     
-    def setup_ui(self) -> None:
-        """Initialize the GPU Pro layout"""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+    def _setup_ui(self) -> None:
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(8)
         
-        header_label = QLabel("⚡ GPU Pro Telemetry")
-        header_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 16px;
-            font-weight: bold;
-            color: #bc13fe;
+        # Left 70%: Control Panel
+        left_panel = VitreosWinFrame(
+            title="OVERCLOCK_CONTROL",
+            accent_color="warning_orange",
+            badge="⚠",
+            badge_color="critical_red"
+        )
+        
+        left_layout = QVBoxLayout()
+        left_layout.setContentsMargins(12, 12, 12, 12)
+        left_layout.setSpacing(12)
+        
+        # GPU Name
+        gpu_label = QLabel("NVIDIA RTX 3060 // AMPERE")
+        gpu_label.setFont(get_font('mono', FONT_SIZES['title']))
+        gpu_label.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
+        left_layout.addWidget(gpu_label)
+        
+        # Warning badge
+        warning = HazardBadge("⚠ OVERCLOCKING VOIDS WARRANTY")
+        left_layout.addWidget(warning)
+        
+        # Power Limit Slider
+        power_label = QLabel("POWER LIMIT OFFSET")
+        power_label.setFont(get_font('mono', FONT_SIZES['label']))
+        power_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        left_layout.addWidget(power_label)
+        
+        power_row = QHBoxLayout()
+        self.power_slider = NeonSlider(min_val=-50, max_val=50)
+        self.power_slider.valueChanged.connect(self._on_power_changed)
+        power_row.addWidget(self.power_slider)
+        
+        self.power_value = QLabel("+0 W")
+        self.power_value.setFont(get_font('mono', FONT_SIZES['value_large']))
+        self.power_value.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
+        self.power_value.setFixedWidth(80)
+        power_row.addWidget(self.power_value)
+        left_layout.addLayout(power_row)
+        
+        # Core Clock Slider
+        core_label = QLabel("CORE CLOCK OFFSET")
+        core_label.setFont(get_font('mono', FONT_SIZES['label']))
+        core_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        left_layout.addWidget(core_label)
+        
+        core_row = QHBoxLayout()
+        self.core_slider = NeonSlider(min_val=-200, max_val=200)
+        self.core_slider.valueChanged.connect(self._on_core_changed)
+        core_row.addWidget(self.core_slider)
+        
+        self.core_value = QLabel("+0 MHz")
+        self.core_value.setFont(get_font('mono', FONT_SIZES['value_large']))
+        self.core_value.setStyleSheet(f"color: {VITREOS_COLORS['primary_purple']};")
+        self.core_value.setFixedWidth(80)
+        core_row.addWidget(self.core_value)
+        left_layout.addLayout(core_row)
+        
+        # Memory Clock Slider
+        mem_label = QLabel("MEMORY CLOCK OFFSET")
+        mem_label.setFont(get_font('mono', FONT_SIZES['label']))
+        mem_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        left_layout.addWidget(mem_label)
+        
+        mem_row = QHBoxLayout()
+        self.mem_slider = NeonSlider(min_val=-500, max_val=500)
+        self.mem_slider.valueChanged.connect(self._on_mem_changed)
+        mem_row.addWidget(self.mem_slider)
+        
+        self.mem_value = QLabel("+0 MHz")
+        self.mem_value.setFont(get_font('mono', FONT_SIZES['value_large']))
+        self.mem_value.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
+        self.mem_value.setFixedWidth(80)
+        mem_row.addWidget(self.mem_value)
+        left_layout.addLayout(mem_row)
+        
+        # Apply button
+        apply_btn = QLabel("[ APPLY SETTINGS ]")
+        apply_btn.setFont(get_font('mono', FONT_SIZES['label']))
+        apply_btn.setStyleSheet(f"""
+            color: {VITREOS_COLORS['green']};
+            background: {VITREOS_COLORS['bg_card']};
+            border: 1px solid {VITREOS_COLORS['green']};
+            padding: 8px;
         """)
-        layout.addWidget(header_label)
+        apply_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        apply_btn.mousePressEvent = lambda e: self._apply_settings()
+        left_layout.addWidget(apply_btn)
         
-        cards_layout = QGridLayout()
-        cards_layout.setSpacing(15)
+        # Status
+        self.status_label = QLabel("STATUS: IDLE")
+        self.status_label.setFont(get_font('mono', FONT_SIZES['small']))
+        self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+        left_layout.addWidget(self.status_label)
         
-        self.clock_card = LiquidGlassCard("GPU Clock", "-- MHz", "Core Frequency", self)
-        self.power_card = LiquidGlassCard("Power Draw", "-- W", "TDP Usage", self)
-        self.fan_card = LiquidGlassCard("Fan Speed", "-- RPM", "Cooling", self)
-        self.temp_card = LiquidGlassCard("Temperature", "-- °C", "Core Temp", self)
-        self.vram_card = LiquidGlassCard("VRAM Usage", "-- MB", "Memory", self)
-        self.hotspot_card = LiquidGlassCard("Hotspot", "-- °C", "Junction Temp", self)
+        left_layout.addStretch()
+        left_panel.set_content_layout(left_layout)
+        main_layout.addWidget(left_panel, 7)
         
-        cards_layout.addWidget(self.clock_card, 0, 0)
-        cards_layout.addWidget(self.power_card, 0, 1)
-        cards_layout.addWidget(self.fan_card, 0, 2)
-        cards_layout.addWidget(self.temp_card, 1, 0)
-        cards_layout.addWidget(self.vram_card, 1, 1)
-        cards_layout.addWidget(self.hotspot_card, 1, 2)
+        # Right 30%: Thermal Density Map
+        right_panel = VitreosWinFrame(
+            title="THERMAL_DENSITY",
+            accent_color="critical_red"
+        )
         
-        layout.addLayout(cards_layout)
+        right_layout = QVBoxLayout()
+        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_layout.setSpacing(8)
         
-        vram_label = QLabel("VRAM Utilization:")
-        vram_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 12px;
-            font-weight: bold;
-            color: #00f2ff;
-        """)
-        layout.addWidget(vram_label)
+        density_label = QLabel("HOTSPOT MAP")
+        density_label.setFont(get_font('mono', FONT_SIZES['label']))
+        density_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        right_layout.addWidget(density_label)
         
-        self.vram_bar = QProgressBar()
-        self.vram_bar.setStyleSheet("""
-            QProgressBar {
-                background: rgba(12, 12, 15, 0.95);
-                border: 2px solid rgba(188, 19, 254, 0.5);
-                border-radius: 6px;
-                text-align: center;
-                font-family: 'Consolas';
-                font-size: 11px;
-                color: #ffffff;
-                height: 25px;
-            }
-            QProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #bc13fe, stop:1 #00f2ff);
-                border-radius: 4px;
-            }
-        """)
-        layout.addWidget(self.vram_bar)
+        # Thermal density bars
+        self.density_bars = []
+        zones = ['GPU CORE', 'VRAM', 'VRM', 'PCB', 'BACKPLATE']
         
-        fan_control_layout = QHBoxLayout()
+        for zone in zones:
+            zone_layout = QHBoxLayout()
+            zone_layout.setSpacing(8)
+            
+            bar = ThermalDensityBar()
+            self.density_bars.append(bar)
+            zone_layout.addWidget(bar)
+            
+            zone_label = QLabel(zone)
+            zone_label.setFont(get_font('mono', FONT_SIZES['tiny']))
+            zone_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+            zone_layout.addWidget(zone_label, 1)
+            
+            right_layout.addLayout(zone_layout)
         
-        fan_label = QLabel("🌀 Fan Control:")
-        fan_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 12px;
-            font-weight: bold;
-            color: #00f2ff;
-        """)
-        
-        self.fan_slider = QSlider(Qt.Orientation.Horizontal)
-        self.fan_slider.setMinimum(0)
-        self.fan_slider.setMaximum(100)
-        self.fan_slider.setValue(0)
-        self.fan_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                background: rgba(12, 12, 15, 0.95);
-                border: 2px solid rgba(188, 19, 254, 0.5);
-                height: 8px;
-                border-radius: 4px;
-            }
-            QSlider::handle:horizontal {
-                background: #bc13fe;
-                border: 2px solid #00f2ff;
-                width: 18px;
-                margin: -5px 0;
-                border-radius: 9px;
-            }
-            QSlider::sub-page:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #bc13fe, stop:1 #00f2ff);
-                border-radius: 4px;
-            }
-        """)
-        self.fan_slider.valueChanged.connect(self.on_fan_changed)  # type: ignore
-        
-        self.fan_value_label = QLabel("Auto")
-        self.fan_value_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 12px;
-            font-weight: bold;
-            color: #00f2ff;
-            min-width: 60px;
-        """)
-        
-        self.fan_reset_btn = QPushButton("Reset")
-        self.fan_reset_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(188, 19, 254, 0.3);
-                border: 2px solid #bc13fe;
-                border-radius: 6px;
-                padding: 5px 15px;
-                font-family: 'Consolas';
-                font-size: 11px;
-                font-weight: bold;
-                color: #ffffff;
-            }
-            QPushButton:hover {
-                background: rgba(188, 19, 254, 0.5);
-            }
-        """)
-        self.fan_reset_btn.clicked.connect(self.on_fan_reset)  # type: ignore
-        
-        fan_control_layout.addWidget(fan_label)
-        fan_control_layout.addWidget(self.fan_slider)
-        fan_control_layout.addWidget(self.fan_value_label)
-        fan_control_layout.addWidget(self.fan_reset_btn)
-        
-        layout.addLayout(fan_control_layout)
-        
-        self.throttle_label = QLabel("")
-        self.throttle_label.setStyleSheet("""
-            font-family: 'Consolas';
-            font-size: 11px;
-            color: #ff8c00;
-            padding: 5px;
-        """)
-        self.throttle_label.hide()
-        layout.addWidget(self.throttle_label)
-        
-        layout.addStretch()
+        right_layout.addStretch()
+        right_panel.set_content_layout(right_layout)
+        main_layout.addWidget(right_panel, 3)
     
-    def on_fan_changed(self, value: int) -> None:
-        """Handle fan slider change"""
-        if value == 0:
-            self.fan_value_label.setText("Auto")
-        else:
-            self.fan_value_label.setText(f"{value}%")
-        self.fan_speed_changed.emit(value)  # type: ignore
+    def _on_power_changed(self, value: int) -> None:
+        sign = "+" if value >= 0 else ""
+        self.power_value.setText(f"{sign}{value} W")
     
-    def on_fan_reset(self) -> None:
-        """Reset fan to auto mode"""
-        self.fan_slider.setValue(0)
+    def _on_core_changed(self, value: int) -> None:
+        sign = "+" if value >= 0 else ""
+        self.core_value.setText(f"{sign}{value} MHz")
     
-    def update_telemetry(self, telemetry: GPUTelemetry) -> None:
-        """Update GPU telemetry display"""
-        self.clock_card.set_value(f"{telemetry.clock_mhz} MHz")
-        self.power_card.set_value(f"{telemetry.power_watts:.1f} W")
-        self.fan_card.set_value(f"{telemetry.fan_rpm} RPM")
-        self.temp_card.set_value(f"{telemetry.temp_c}°C")
-        self.vram_card.set_value(f"{telemetry.vram_used_mb} MB")
-        self.hotspot_card.set_value(f"{telemetry.hotspot_temp_c:.1f}°C")
+    def _on_mem_changed(self, value: int) -> None:
+        sign = "+" if value >= 0 else ""
+        self.mem_value.setText(f"{sign}{value} MHz")
+    
+    def _apply_settings(self) -> None:
+        self.status_label.setText("STATUS: APPLYING...")
+        self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
+        # Placeholder for NVML apply logic
+        print(f"[GPU PRO] Apply: Power={self.power_slider.value}, Core={self.core_slider.value}, Mem={self.mem_slider.value}")
+    
+    def update_stats(self, data: Dict[str, Any]) -> None:
+        """Update thermal density map from telemetry."""
+        gpu_data = data.get('gpu', {})
+        temp = gpu_data.get('temp', 0)
         
-        vram_percent = int((telemetry.vram_used_mb / telemetry.vram_total_mb) * 100) if telemetry.vram_total_mb > 0 else 0
-        self.vram_bar.setValue(vram_percent)
-        self.vram_bar.setFormat(f"{telemetry.vram_used_mb} MB / {telemetry.vram_total_mb} MB ({vram_percent}%)")
-        
-        if telemetry.is_throttling:
-            self.throttle_label.setText("⚠️ GPU THROTTLING DETECTED - Check thermals and power limits")
-            self.throttle_label.show()
-        else:
-            self.throttle_label.hide()
+        # Update density bars with simulated hotspot temps
+        for i, bar in enumerate(self.density_bars):
+            hotspot_temp = temp + (i * 2)  # Simulate different zone temps
+            bar.set_temp(hotspot_temp)
 
 
+__all__ = ['GPUProTab']
