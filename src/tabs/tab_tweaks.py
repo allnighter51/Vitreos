@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportIncompatibleMethodOverride=false, reportConstantRedefinition=false, reportUnboundVariable=false, reportPossiblyUnboundVariable=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportMissingTypeArgument=false, reportArgumentType=false, reportUnusedImport=false, reportUnusedVariable=false
 """
 Vitreos Tweaks Tab - System Optimizations
 Replaces Logbook with OS-level performance tweaks

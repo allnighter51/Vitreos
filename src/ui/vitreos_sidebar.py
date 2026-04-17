@@ -2,18 +2,17 @@
 Vitreos Tactical Sidebar - Phosphor Glow Logo and Pulse Log
 """
 
-from typing import List, Tuple, Optional, Dict, Any
+from typing import Optional, List, Dict, Tuple
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QAbstractItemView, QStyledItemDelegate, QStyleOptionViewItem
 )
 from PyQt6.QtCore import Qt, QTimer, QRectF, QModelIndex
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QBrush, QPainterPath
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPaintEvent
 from datetime import datetime
-import random
 
 from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
-
+import random
 
 # ── Tag → hex color lookup (shared by delegate and append_log) ──────────────
 _TAG_COLORS: Dict[str, str] = {
@@ -119,7 +118,7 @@ class GlowingStatusLED(QWidget):
         self.setStyleSheet('background: transparent;')
         self.setFixedSize(32, 28)
 
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
@@ -177,10 +176,11 @@ class PhosphorGlowLabel(QLabel):
     
     def _flicker_glow(self) -> None:
         """Subtle flicker animation for phosphor glow."""
+        import random
         self.glow_intensity = 15 + random.randint(-2, 2)
         self.update()
     
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
@@ -444,6 +444,7 @@ class VitreosSidebar(QWidget):
     
     def _simulate_log_entry(self) -> None:
         """Generate varied system log entries from message pool."""
+        import random
         messages = [
             ('SYS', 'Polling hardware sensors...', 'text_dim'),
             ('GPU', 'Driver version: 546.33 WHQL', 'warning_orange'),

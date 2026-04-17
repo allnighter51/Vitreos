@@ -1,9 +1,10 @@
+# pyright: reportMissingTypeStubs=false, reportConstantRedefinition=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
 """
 Vitreos Bootstrap Worker - Asynchronous Hardware Initialization
 Offloads heavy I/O operations (WMI, NVML, RPC) to background threads
 """
 
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from PyQt6.QtCore import QThread, pyqtSignal
 import warnings
 

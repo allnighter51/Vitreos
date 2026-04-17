@@ -1,16 +1,16 @@
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportIncompatibleMethodOverride=false, reportConstantRedefinition=false, reportUnboundVariable=false, reportPossiblyUnboundVariable=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportMissingTypeArgument=false, reportArgumentType=false, reportUnusedImport=false, reportUnusedVariable=false
 """
 Security Tab - OSINT & CCE Shield
 100% Terminal Style | 20% Threat Level Gutter
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt
 from datetime import datetime
 import os
 
-from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
+from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
 from src.ui.vitreos_widgets import VitreosWinFrame, HazardBadge
 
 

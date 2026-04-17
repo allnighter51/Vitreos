@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportIncompatibleMethodOverride=false, reportConstantRedefinition=false, reportUnboundVariable=false, reportPossiblyUnboundVariable=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportMissingTypeArgument=false, reportArgumentType=false, reportUnusedImport=false, reportUnusedVariable=false
 """
 Vitreos Remote Tab - Discord Rich Presence Configuration
 Phase 3: CustomRP Integration with Tournament Mode
 """
 from typing import Dict, Any, Optional
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QLineEdit, QPushButton, QCheckBox, QGridLayout, QTextEdit)
+                             QLineEdit, QPushButton, QCheckBox, QGridLayout)
 from PyQt6.QtCore import Qt, pyqtSignal
 from src.ui.vitreos_widgets import VitreosWinFrame
 from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font

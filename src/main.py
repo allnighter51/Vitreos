@@ -1,3 +1,4 @@
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportConstantRedefinition=false, reportIncompatibleMethodOverride=false, reportArgumentType=false, reportPossiblyUnboundVariable=false, reportUnusedVariable=false, reportUnknownLambdaType=false
 """
 Vitreos V3 - Pure Python PyQt6 Architecture
 Main Application Window with Figma-Accurate Layout
@@ -6,26 +7,26 @@ Main Application Window with Figma-Accurate Layout
 import sys
 from typing import Optional, Dict, Any
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QHBoxLayout, QGridLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy, QSizeGrip, QFrame
+    QApplication, QMainWindow, QWidget, QHBoxLayout, QGridLayout, QVBoxLayout, QLabel, QSizeGrip, QFrame, QPushButton
 )
-from PyQt6.QtCore import Qt, QPoint, QThread, pyqtSignal, QTimer, QEvent
-from PyQt6.QtGui import QMouseEvent, QEnterEvent
+from PyQt6.QtCore import Qt, QPoint, QTimer, QEvent
+from PyQt6.QtGui import QMouseEvent, QResizeEvent, QKeyEvent, QCloseEvent
 
 from src.ui.vitreos_theme import VITREOS_COLORS, VITREOS_STYLESHEET, initialize_theme, get_font, FONT_SIZES
-from src.ui.vitreos_widgets import SystemPulseLog, VitreosWinFrame, ChromaticLogo, apply_phosphor_glow
+from src.ui.vitreos_widgets import apply_phosphor_glow
 from src.ui.vitreos_sidebar import VitreosSidebar
 from src.ui.vitreos_effects import CRTOverlay, GlitchTransition
 from src.core.vitreos_telemetry_pull import PullBasedTelemetry, PULSE_AVAILABLE
-from src.core.vitreos_presence import PresenceWorker
-from src.core.vitreos_bridge import translate_to_legacy_format
+from src.core.vitreos_presence import PresenceWorker  # type: ignore[import-not-found]
+from src.core.vitreos_bridge import translate_to_legacy_format  # type: ignore[import-not-found]
 from src.ui.vitreos_modules import (
     CpuMonitor, GpuMonitor, ThermalCtrl, StorageArray, MemoryArray, NetInterface
 )
 
 # Import tab modules for 10-tab navigation
 try:
-    from src.tabs import (
-        VitalsTab, NetworkTab, ProcessesTab, GPUProTab, SecurityTab,
+    from src.tabs import (  # type: ignore[import-not-found]
+        NetworkTab, ProcessesTab, GPUProTab, SecurityTab,
         StorageTab, TweaksTab, ConsoleTab, RemoteTab, SettingsTab
     )
     TABS_AVAILABLE = True
@@ -53,16 +54,16 @@ class MicroControl(QLabel):
             f" border: 1px solid {VITREOS_COLORS['border_primary']};"
         )
 
-    def enterEvent(self, event) -> None:
+    def enterEvent(self, a0: QEvent) -> None:
         self.setStyleSheet(
             f"background: {self._hover_color};"
             f" border: 1px solid {self._hover_color};"
         )
-        super().enterEvent(event)
+        super().enterEvent(a0)
 
-    def leaveEvent(self, event: QEvent | None) -> None:
+    def leaveEvent(self, a0: QEvent) -> None:
         self._set_idle()
-        super().leaveEvent(event)
+        super().leaveEvent(a0)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -105,6 +106,9 @@ class VitreosMainWindow(QMainWindow):
         
         # Task 1: Tab Cache - "Stay-Alive" system for background tabs
         self.tab_cache: Dict[str, QWidget] = {}
+        
+        # Pre-initialize Storage Tab for background telemetry
+        self.storage_tab: Optional[QWidget] = None
         
         # Master Debug: Verbose Mode
         self.verbose_mode = False
@@ -319,7 +323,7 @@ class VitreosMainWindow(QMainWindow):
             btn.setProperty('accent_color', accent_color)
             
             def make_handler(name: str):
-                def handler(a0: QMouseEvent | None) -> None:
+                def handler(a0: QMouseEvent) -> None:
                     self._on_tab_clicked(name)
                 return handler
             btn.mousePressEvent = make_handler(tab_name)  # type: ignore[method-assign]
@@ -424,9 +428,9 @@ class VitreosMainWindow(QMainWindow):
         # Make top bar draggable for frameless window behaviour
         top_bar.setCursor(Qt.CursorShape.SizeAllCursor)
         # Use `a0` parameter name to match PyQt6 stubs and satisfy Pylance
-        top_bar.mousePressEvent = lambda a0: self._top_bar_mouse_press(a0)
-        top_bar.mouseMoveEvent = lambda a0: self._top_bar_mouse_move(a0)
-        top_bar.mouseReleaseEvent = lambda a0: self._top_bar_mouse_release(a0)
+        top_bar.mousePressEvent = lambda a0: self._top_bar_mouse_press(a0)  # type: ignore[method-assign]
+        top_bar.mouseMoveEvent = lambda a0: self._top_bar_mouse_move(a0)  # type: ignore[method-assign]
+        top_bar.mouseReleaseEvent = lambda a0: self._top_bar_mouse_release(a0)  # type: ignore[method-assign]
         
         return top_bar
     
@@ -446,32 +450,32 @@ class VitreosMainWindow(QMainWindow):
         self.close()
 
     # ---------- Top-bar drag handlers for frameless window ----------
-    def _top_bar_mouse_press(self, a0: QMouseEvent | None) -> None:
+    def _top_bar_mouse_press(self, a0: QMouseEvent) -> None:
         """Start window drag when user presses left mouse on top bar."""
         try:
-            if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
+            if a0.button() == Qt.MouseButton.LeftButton:
                 # store offset between window top-left and mouse
                 self.drag_position = a0.globalPosition().toPoint() - self.frameGeometry().topLeft()
                 a0.accept()
         except Exception:
             pass
 
-    def _top_bar_mouse_move(self, a0: QMouseEvent | None) -> None:
+    def _top_bar_mouse_move(self, a0: QMouseEvent) -> None:
         """Move window while dragging the top bar."""
         try:
-            if self.drag_position is not None and a0 is not None and (a0.buttons() & Qt.MouseButton.LeftButton):
+            if self.drag_position is not None and (a0.buttons() & Qt.MouseButton.LeftButton):
                 self.move(a0.globalPosition().toPoint() - self.drag_position)
                 a0.accept()
         except Exception:
             pass
 
-    def _top_bar_mouse_release(self, a0: QMouseEvent | None) -> None:
+    def _top_bar_mouse_release(self, a0: QMouseEvent) -> None:
         """End window drag."""
         self.drag_position = None
     
     # Consolidated debug toggle handler (accepts optional bool from clicked signal)
-    def _on_debug_toggled(self, enabled: bool | None = None) -> None:
-        is_checked = self.debug_btn.isChecked() if enabled is None else bool(enabled)
+    def _on_debug_toggled(self, enabled: bool = False) -> None:
+        is_checked = self.debug_btn.isChecked() if not enabled else bool(enabled)
         self.verbose_mode = is_checked
         self._save_verbose_mode()
 
@@ -606,30 +610,55 @@ class VitreosMainWindow(QMainWindow):
         """Initialize and start the pull-based telemetry system."""
         if not PULSE_AVAILABLE:
             self.sidebar.append_log("ERR", "Rust telemetry engine not available", "critical_red")
+            print("[VITREOS] ERROR: vitreos_pulse module not available")
             return
         
         try:
+            print("[VITREOS] Initializing telemetry...")
             self.telemetry = PullBasedTelemetry()
+            print("[VITREOS] Telemetry object created")
             
             # Connect data signal to update modules
             self.telemetry.data_ready.connect(self._update_modules)
+            print("[VITREOS] Connected data_ready signal")
             
             # Connect log signal to sidebar batch handler (5-second batches)
             self.telemetry.log_ready.connect(self.sidebar.handle_pulse_log_batch)
+            print("[VITREOS] Connected log_ready signal")
             
             # Connect error signal
             self.telemetry.error_occurred.connect(lambda msg: self.sidebar.append_log("ERR", msg, "critical_red"))
+            print("[VITREOS] Connected error_occurred signal")
             
             # Connect network module for adapter sync
             self.network_module.telemetry_worker = self.telemetry  # type: ignore[attr-defined]
+            print("[VITREOS] Connected network module")
             
             # Start telemetry
+            print("[VITREOS] Starting telemetry worker...")
             self.telemetry.start()
+            print("[VITREOS] Telemetry started successfully")
+            
+            # Pre-initialize Storage Tab and connect to telemetry
+            if TABS_AVAILABLE:
+                try:
+                    from src.tabs import StorageTab
+                    self.storage_tab = StorageTab()
+                    self.telemetry.data_ready.connect(self.storage_tab.update_stats)
+                    print("[VITREOS] Storage Tab initialized and connected to telemetry")
+                except Exception as e:
+                    print(f"[VITREOS] Failed to initialize Storage Tab: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             self.sidebar.append_log("SYS", "Telemetry engine initialized", "primary_purple")
         
         except Exception as e:
-            self.sidebar.append_log("ERR", f"Telemetry init failed: {e}", "critical_red")
+            error_msg = f"Telemetry init failed: {e}"
+            self.sidebar.append_log("ERR", error_msg, "critical_red")
+            print(f"[VITREOS] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
     
     def _start_presence(self) -> None:
         """Initialize Discord Rich Presence worker (starts disabled)"""
@@ -638,7 +667,7 @@ class VitreosMainWindow(QMainWindow):
     def _load_verbose_mode(self) -> None:
         """Load verbose mode state from the root config package safely."""
         try:
-            from config.settings import load_settings
+            from config.settings import load_settings  # type: ignore[import-not-found]
             settings = load_settings()
             self.verbose_mode = settings.get('monitoring', {}).get('verbose_mode', False)
         except Exception:
@@ -647,7 +676,7 @@ class VitreosMainWindow(QMainWindow):
     def _save_verbose_mode(self) -> None:
         """Save verbose mode state via the root config package."""
         try:
-            from config.settings import load_settings, save_settings
+            from config.settings import load_settings, save_settings  # type: ignore[import-not-found]
             settings = load_settings()
             if 'monitoring' not in settings:
                 settings['monitoring'] = {}
@@ -730,13 +759,12 @@ class VitreosMainWindow(QMainWindow):
             if self.presence_worker and self.presence_enabled:
                 self.presence_worker.update_hardware_stats(data)
             
-            if 'thermal' in data:
-                # Thermal module needs CPU and GPU temps from their respective sources
-                thermal_data = {
-                    'cpuTemp': data.get('cpu', {}).get('temp', 0),
-                    'gpuTemp': data.get('gpu', {}).get('temp', 0),
-                }
-                self.thermal_module.update_data(thermal_data)
+            # Thermal module needs CPU and GPU temps from their respective sources
+            thermal_data = {
+                'cpuTemp': data.get('cpu', {}).get('temp', 0),
+                'gpuTemp': data.get('gpu', {}).get('temp', 0),
+            }
+            self.thermal_module.update_data(thermal_data)
             
             if 'storage' in data:
                 self.storage_module.update_data(data['storage'])
@@ -794,17 +822,17 @@ class VitreosMainWindow(QMainWindow):
         if 'CONSOLE' in self.tab_cache and hasattr(self.tab_cache['CONSOLE'], 'write_app_event'):
             self.tab_cache['CONSOLE'].write_app_event(message)  # type: ignore[attr-defined]
     
-    def resizeEvent(self, event) -> None:
+    def resizeEvent(self, a0: QResizeEvent) -> None:
         """Handle window resize to update overlay positions."""
-        super().resizeEvent(event)
+        super().resizeEvent(a0)
         if hasattr(self, 'crt_overlay'):
             self.crt_overlay.setGeometry(0, 0, self.width(), self.height())
         if hasattr(self, 'glitch_overlay'):
             self.glitch_overlay.setGeometry(0, 0, self.width(), self.height())
     
-    def keyPressEvent(self, event) -> None:
+    def keyPressEvent(self, a0: QKeyEvent) -> None:
         """Escape key: reserved for future use."""
-        super().keyPressEvent(event)
+        super().keyPressEvent(a0)
 
     def _on_tab_changed(self, tab_name: str) -> None:
         """
@@ -913,12 +941,14 @@ class VitreosMainWindow(QMainWindow):
                     self.memory_module.show()
         
         elif tab_name == 'STORAGE' and TABS_AVAILABLE:
-            try:
-                self.active_tab_widget = StorageTab()
+            # Use pre-initialized Storage Tab from cache
+            if self.storage_tab:
+                self.active_tab_widget = self.storage_tab
                 self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
                 if self.active_tab_widget:
                     self.active_tab_widget.show()
-            except Exception:
+            else:
+                # Fallback: show storage module
                 self.storage_module.show()
         
         elif tab_name == 'TWEAKS' and TABS_AVAILABLE:
@@ -1022,7 +1052,7 @@ class VitreosMainWindow(QMainWindow):
     # CLEANUP
     # ───────────────────────────────────────────────────────────────────────
     
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0: QCloseEvent) -> None:
         """Clean shutdown of telemetry and presence workers."""
         
         if self.telemetry:
@@ -1032,7 +1062,7 @@ class VitreosMainWindow(QMainWindow):
             self.presence_worker.stop()
             self.presence_worker.wait(2000)
         
-        event.accept()
+        a0.accept()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

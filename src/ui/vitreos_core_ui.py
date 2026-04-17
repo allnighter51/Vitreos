@@ -5,10 +5,9 @@ Reusable widgets and UI elements for the Vitreos application.
 """
 from typing import Optional, Deque, List
 from collections import deque
-
-from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame
-from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QLinearGradient, QFont, QPaintEvent
+from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPaintEvent
+from PyQt6.QtCore import Qt, QTimer
 
 
 class SparklineWidget(QWidget):
@@ -423,8 +422,8 @@ class VitreosModule(QFrame):
         icon_label = QLabel(self.icon)
         icon_label.setStyleSheet("font-size: 24px;")
         
-        title_label = QLabel(self.title)
-        title_label.setStyleSheet("""
+        self.title_label = QLabel(self.title)
+        self.title_label.setStyleSheet("""
             font-family: 'Consolas';
             font-size: 14px;
             font-weight: bold;
@@ -432,7 +431,7 @@ class VitreosModule(QFrame):
         """)
         
         header_layout.addWidget(icon_label)
-        header_layout.addWidget(title_label)
+        header_layout.addWidget(self.title_label)
         header_layout.addStretch()
         
         # Hazard sticker
@@ -493,5 +492,13 @@ class VitreosModule(QFrame):
             color: white;
         """)
         self.hazard_label.show()
+
+    def set_title(self, title: str) -> None:
+        """Update the module title shown in the header."""
+        self.title = title
+        try:
+            self.title_label.setText(title)
+        except Exception:
+            pass
 
 

@@ -3,12 +3,11 @@
 Vitreos Network Tab - Tactical Network Monitoring
 Phase 1: 3-Frame Mission Control Layout
 """
-from typing import Dict, Any, List, Optional
-import psutil
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QComboBox, QGridLayout, QSizePolicy, QScrollArea)
+from typing import Optional, List, Dict, Any
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QScrollArea, QSizePolicy, QGridLayout
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPainter, QPen, QColor
+from PyQt6.QtGui import QPainter, QPen, QColor, QPaintEvent
+import psutil
 from src.ui.vitreos_widgets import VitreosWinFrame, clear_layout
 from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
 
@@ -369,7 +368,7 @@ class BandwidthWaveform(QWidget):
         self.upload_data = upload[-60:]
         self.update()
     
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         """Draw waveform graph"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)

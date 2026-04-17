@@ -3,16 +3,12 @@ CRT Post-Processing Overlay
 Optimized Scanlines and Film Grain for Solid State Y2K Aesthetic
 """
 
-from collections import deque
-from typing import Optional, Deque, Tuple
-from PyQt6.QtWidgets import QApplication, QWidget
-from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QEvent
-
-from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QBrush, QPolygon, QCursor, QPainterPath
-from src.ui.vitreos_theme import VITREOS_COLORS
+from typing import Optional
+from PyQt6.QtWidgets import QWidget
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QPainter, QColor, QPen, QPixmap, QResizeEvent, QPaintEvent
 
 import random
-import time
 
 
 class CRTOverlay(QWidget):
@@ -62,12 +58,12 @@ class CRTOverlay(QWidget):
         self.grain_offset = (self.grain_offset + 1) % 100
         self.update()
     
-    def resizeEvent(self, event) -> None:
+    def resizeEvent(self, a0: QResizeEvent) -> None:
         """Regenerate scanline pixmap on resize."""
-        super().resizeEvent(event)
+        super().resizeEvent(a0)
         self.scanline_pixmap = None  # Force regeneration
     
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         """Draw optimized CRT effects."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
@@ -134,7 +130,7 @@ class GlitchTransition(QWidget):
         self.glitch_active = False
         self.setVisible(False)
     
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         """Draw glitch effect."""
         if not self.glitch_active:
             return

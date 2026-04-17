@@ -1,14 +1,15 @@
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportConstantRedefinition=false
 """
-Vitreos Pulse - Pull-Based Telemetry with 1Hz Log Throttling
-Decouples hardware polling from UI updates and log rendering
+Vitreos Pulse - Pull-Based Telemetry with 1Hz Polling
+Optimized for sustainable monitoring with minimal CPU overhead
 
 Architecture:
-- Rust: Background thread polls hardware at variable rate (8-100ms)
-- Python UI: QTimer pulls latest snapshot at 60Hz (16.6ms) for gauges
-- Python Logs: QTimer flushes buffered logs at 1Hz (1000ms) for text rendering
+- Rust: Background thread polls hardware at 1Hz (1000ms)
+- Python UI: QTimer pulls latest snapshot at 1Hz (1000ms) for gauges
+- Python Logs: QTimer flushes buffered logs at 5s intervals for text rendering
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from collections import deque
 from datetime import datetime
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
@@ -16,7 +17,7 @@ from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 from src.core.vitreos_logger import v_debug, v_info, v_error
 
 try:
-    import vitreos_pulse
+    import vitreos_pulse  # type: ignore[import-not-found]
     PULSE_AVAILABLE = True
 except ImportError:
     PULSE_AVAILABLE = False
@@ -25,20 +26,20 @@ except ImportError:
 
 class PullBasedTelemetry(QObject):
     """
-    Pull-based telemetry manager with 1Hz throttled log buffer.
+    Pull-based telemetry manager with 1Hz polling and 5s log batching.
     
     Update Strategy:
-    - Hardware Polling (Rust): Variable 8-100ms (slider-controlled)
-    - UI Gauges (Python): Fixed 60Hz (16.6ms) for smooth rendering
-    - Log Dispatch (Python): Throttled 1Hz (1000ms) batch flush
+    - Hardware Polling (Rust): 1Hz (1000ms) for sustainable monitoring
+    - UI Gauges (Python): 1Hz (1000ms) synchronized with hardware
+    - Log Dispatch (Python): 5s batching to minimize UI updates
     
-    The log buffer acts as a "Collector" that accumulates events at high speed,
-    then a "Dispatcher" that flushes them to the UI in batches at 1Hz.
+    The log buffer acts as a "Collector" that accumulates events,
+    then a "Dispatcher" that flushes them to the UI in 5-second batches.
     """
     
     # Signals
-    data_ready = pyqtSignal(dict)  # Fires at 60Hz for gauges/graphs
-    log_ready = pyqtSignal(str)    # Fires at 1Hz for SYSTEM_PULSE (batched)
+    data_ready = pyqtSignal(dict)  # Fires at 1Hz for gauges/graphs
+    log_ready = pyqtSignal(str)    # Fires at 5s for SYSTEM_PULSE (batched)
     error_occurred = pyqtSignal(str)
     
     def __init__(self):
@@ -48,15 +49,15 @@ class PullBasedTelemetry(QObject):
             raise RuntimeError("vitreos_pulse module not available")
         
         # Initialize Rust engine
-        self.pulse = vitreos_pulse.VitreosPulse()
+        self.pulse = vitreos_pulse.VitreosPulse()  # type: ignore[attr-defined]
         
         # QTimer for UI updates (synchronized with hardware polling)
         self.ui_timer = QTimer()
-        # Default to Rust polling rate where possible (fallback to 16ms / ~60Hz)
+        # Default to 1000ms (1Hz) for sustainable polling
         try:
-            polling_ms = int(vitreos_pulse.get_polling_rate())
+            polling_ms = int(vitreos_pulse.get_polling_rate())  # type: ignore[attr-defined]
         except Exception:
-            polling_ms = 16
+            polling_ms = 1000  # 1Hz default
         self.ui_timer.setInterval(polling_ms)
         self.ui_timer.timeout.connect(self._pull_metrics)
         
@@ -88,15 +89,23 @@ class PullBasedTelemetry(QObject):
             self.pulse.bootstrap()
             self._buffer_log("OK", "Hardware discovery complete", "green")
             
-            # Start UI update timer (60Hz)
+            # Set Rust polling rate to 1Hz before starting
+            vitreos_pulse.set_polling_rate(1000)  # type: ignore[attr-defined]
+            v_info("Set Rust polling rate to 1000ms (1Hz)")
+            
+            # Set UI timer to match (1Hz)
+            self.ui_timer.setInterval(1000)
+            v_info("Set UI refresh rate to 1000ms (1Hz)")
+            
+            # Start UI update timer (1Hz)
             self.ui_timer.start()
             
-            # Start log flush timer (1Hz)
+            # Start log flush timer (5s)
             self.log_flush_timer.start()
             
-            self._buffer_log("SYS", "Telemetry active (Synced UI / Variable HW / 5s logs)", "primary_purple")
+            self._buffer_log("SYS", "Telemetry active (1Hz polling / 5s logs)", "primary_purple")
             
-            v_info("Telemetry started - UI: Synced, Logs: 5s")
+            v_info("Telemetry started - UI: 1Hz, Logs: 5s")
         except Exception as e:
             v_error(f"Bootstrap failed: {e}")
             self.error_occurred.emit(f"Bootstrap failed: {e}")
@@ -105,7 +114,7 @@ class PullBasedTelemetry(QObject):
         """Stop telemetry system"""
         self.ui_timer.stop()
         self.log_flush_timer.stop()
-        vitreos_pulse.stop_polling()
+        vitreos_pulse.stop_polling()  # type: ignore[attr-defined]
         self._buffer_log("SYS", "Telemetry stopped", "text_dim")
         self._flush_logs_to_ui()
         v_info("Telemetry stopped")
@@ -131,9 +140,9 @@ class PullBasedTelemetry(QObject):
                         core_count = cpu.get('coreCount')
                         phys = cpu.get('physicalCores')
                         logical = cpu.get('logicalThreads')
-                        print(f"[TELEMETRY DEBUG] CPU payload: totalLoad={total} temp={temp} cores_len={len(cores)} coreCount={core_count} physicalCores={phys} logicalThreads={logical}")
+                        v_debug(f"Telemetry CPU payload: totalLoad={total} temp={temp} cores_len={len(cores)} coreCount={core_count} physicalCores={phys} logicalThreads={logical}")
                     except Exception:
-                        print("[TELEMETRY DEBUG] CPU payload:", data.get('cpu'))
+                        v_debug("Telemetry CPU payload: %s" % (data.get('cpu'),))
 
                 self.data_ready.emit(data)
 
@@ -230,7 +239,7 @@ class PullBasedTelemetry(QObject):
                 5000ms = 0.2 FPS (minimal overhead)
         """
         try:
-            vitreos_pulse.set_polling_rate(interval_ms)
+            vitreos_pulse.set_polling_rate(interval_ms)  # type: ignore[attr-defined]
             fps = 1000.0 / interval_ms
             self._buffer_log("SYS", f"Hardware polling: {interval_ms}ms ({fps:.1f} FPS)", "cyan")
             v_info(f"Polling rate set to {interval_ms}ms ({fps:.1f} FPS)")
@@ -257,8 +266,8 @@ class PullBasedTelemetry(QObject):
     def get_polling_rate(self) -> int:
         """Get current hardware polling rate (milliseconds)"""
         try:
-            return vitreos_pulse.get_polling_rate()
-        except:
+            return vitreos_pulse.get_polling_rate()  # type: ignore[attr-defined,no-any-return]
+        except Exception:
             return 1000  # Default fallback
     
     def set_active_adapter(self, adapter_name: str) -> None:

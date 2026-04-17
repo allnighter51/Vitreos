@@ -1,0 +1,14 @@
+{
+  "typeCheckingMode": "off",
+  "reportMissingTypeStubs": false,
+  "reportUnknownMemberType": false,
+  "reportUnknownVariableType": false,
+  "reportUnknownArgumentType": false,
+  "reportUnknownParameterType": false,
+  "reportMissingParameterType": false,
+  "reportArgumentType": false,
+  "reportIncompatibleMethodOverride": false,
+  "reportConstantRedefinition": false,
+  "reportUnboundVariable": false,
+  "reportPossiblyUnboundVariable": false
+}

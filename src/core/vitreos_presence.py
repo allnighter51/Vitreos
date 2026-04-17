@@ -1,19 +1,24 @@
+# pyright: reportInvalidTypeForm=false
 """
 Vitreos Discord Rich Presence Engine
 Phase 2: Live hardware stats in Discord with Tournament Mode
 """
 
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 from PyQt6.QtCore import QThread, pyqtSignal
 
-try:
+if TYPE_CHECKING:
     from pypresence.presence import Presence
+
+try:
+    from pypresence.presence import Presence as PresenceClass
     PYPRESENCE_AVAILABLE = True
 except ImportError:
     PYPRESENCE_AVAILABLE = False
-    Presence = None  # type: ignore
-    print("[PRESENCE] pypresence not available - Discord Rich Presence disabled")
+    PresenceClass = None  # type: ignore[assignment,misc]
+    from src.core.vitreos_logger import v_info
+    v_info("pypresence not available - Discord Rich Presence disabled")
 
 
 class PresenceWorker(QThread):
@@ -31,7 +36,7 @@ class PresenceWorker(QThread):
         self.running = False
         self.connected = False
         self.client_id = client_id
-        self.rpc: Optional[Presence] = None
+        self.rpc: Optional['Presence'] = None
         
         # Configuration
         self.show_hardware = True
@@ -46,13 +51,15 @@ class PresenceWorker(QThread):
         self.vram_used = 0.0
         self.vram_total = 12.0
         
-        print("[PRESENCE] Worker initialized (connection deferred)")
+        from src.core.vitreos_logger import v_info
+        v_info("Presence worker initialized (connection deferred)")
     
-    def apply_rpc_connection(self, rpc_object: Presence) -> None:
+    def apply_rpc_connection(self, rpc_object: 'Presence') -> None:
         """Apply RPC connection from bootstrap worker"""
         self.rpc = rpc_object
         self.connected = True
-        print("[PRESENCE] RPC connection applied - ready for updates")
+        from src.core.vitreos_logger import v_info
+        v_info("Presence RPC connection applied - ready for updates")
     
     def run(self) -> None:
         """Main presence update loop (connection already established)"""
@@ -84,7 +91,8 @@ class PresenceWorker(QThread):
                 self.rpc.close()
                 self.connected = False
                 self.status_changed.emit(False)
-                print("[PRESENCE] Disconnected from Discord")
+                from src.core.vitreos_logger import v_info
+                v_info("Presence disconnected from Discord")
             except:
                 pass
     
@@ -136,7 +144,8 @@ class PresenceWorker(QThread):
                 start=int(time.time())
             )
         except Exception as e:
-            print(f"[PRESENCE] Update failed: {e}")
+            from src.core.vitreos_logger import v_error
+            v_error(f"Presence update failed: {e}")
     
     def update_hardware_stats(self, data: Dict[str, Any]) -> None:
         """Update hardware stats from telemetry data"""

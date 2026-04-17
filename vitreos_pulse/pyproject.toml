@@ -17,7 +17,6 @@ classifiers = [
 ]
 
 [tool.maturin]
-python-source = "python"
 module-name = "vitreos_pulse"
 strip = true
 features = ["pyo3/extension-module"]

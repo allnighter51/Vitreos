@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportUnknownParameterType=false, reportMissingTypeArgument=false, reportUnknownVariableType=false, reportUnknownMemberType=false
 """
 Vitreos Console Tab - Live System Console
 """

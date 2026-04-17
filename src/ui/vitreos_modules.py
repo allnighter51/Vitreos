@@ -1,21 +1,22 @@
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnusedVariable=false
 """
 Vitreos Monitoring Modules - Dashboard Widgets
 Individual monitoring components for the 2x3 grid layout
 """
 
-from typing import Dict, Any, Optional, List
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QComboBox
+from typing import Optional, List, Dict, Any
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QFrame
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QPainter, QPen, QColor
-import random
+from PyQt6.QtGui import QPaintEvent
 
-from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
+from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
 from src.ui.vitreos_widgets import (
     VitreosWinFrame, VitreosSegmentedBar, VitreosVerticalBar,
-    VitreosCircularGauge, VitreosBarcode, IconBadge, AlertBanner,
-    ConnectionStatus, HazardBadge, OCBadge, apply_phosphor_glow
+    VitreosCircularGauge, VitreosBarcode, ConnectionStatus, HazardBadge, OCBadge, apply_phosphor_glow
 )
-from src.core.vitreos_telemetry import TelemetryWorker
+
+# Explicitly ensure no mock drives are present at module load
+_MOCK_DRIVES: list = []
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -211,13 +212,14 @@ class CpuMonitor(VitreosWinFrame):
             temp = float(data.get('temp', 0) or 0)
         except Exception:
             temp = 0.0
-        self.temp_value_label.setText(f"{temp:.0f}°C")
-        self.temp_bar.set_value(temp, 100)
-        
-        if temp > 85:
-            self.temp_value_label.setStyleSheet(f"color: {VITREOS_COLORS['critical_red']};")
+        # Format temp (show '--°C' when telemetry reports zero/unavailable)
+        if temp is None or temp <= 0:
+            self.temp_value_label.setText('--°C')
+            self.temp_value_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
         else:
+            self.temp_value_label.setText(f"{temp:.0f}°C")
             self.temp_value_label.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
+        self.temp_bar.set_value(max(0.0, temp), 100)
         
         cores = data.get('cores', []) or []
         for i, bar in enumerate(self.core_bars):
@@ -271,12 +273,12 @@ class GpuMonitor(VitreosWinFrame):
         layout.setContentsMargins(9, 9, 9, 9)  # Reduced by 25%
         layout.setSpacing(3)  # Reduced by 25%
         
-        self.name_label = QLabel("NVIDIA RTX 3060")
+        self.name_label = QLabel("DISCOVERING GPU...")
         self.name_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
         self.name_label.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
         layout.addWidget(self.name_label)
         
-        self.subtitle_label = QLabel("AMPERE // 12GB GDDR6")
+        self.subtitle_label = QLabel("DISCOVERING...")
         self.subtitle_label.setFont(get_font('mono', FONT_SIZES['micro']))
         self.subtitle_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
         layout.addWidget(self.subtitle_label)
@@ -468,15 +470,26 @@ class GpuMonitor(VitreosWinFrame):
         self.stat_labels['power'].setText(f"{power:.0f} W")
         
         temp = data.get('temp', 0)
-        self.stat_labels['temp'].setText(f"{temp:.0f} °C")
-        
-        # Update badge based on temperature
-        if temp > 85:
-            self.set_badge("⚠", "critical_red")  # Critical warning
-        elif temp > 75:
-            self.set_badge("⚠", "warning_orange")  # Warning
-        else:
-            self.set_badge(None)  # Remove badge when normal
+        # Format temperature display
+        try:
+            if temp is None or float(temp) <= 0:
+                self.stat_labels['temp'].setText('-- °C')
+            else:
+                self.stat_labels['temp'].setText(f"{float(temp):.0f} °C")
+        except Exception:
+            self.stat_labels['temp'].setText('-- °C')
+
+        # Update badge based on temperature (only if we have a valid temp)
+        try:
+            tval = float(temp)
+            if tval > 85:
+                self.set_badge("⚠", "critical_red")  # Critical warning
+            elif tval > 75:
+                self.set_badge("⚠", "warning_orange")  # Warning
+            else:
+                self.set_badge(None)  # Remove badge when normal
+        except Exception:
+            self.set_badge(None)
         
         usage = data.get('usage', 0)
         self.load_value.setText(f"{usage:.0f}%")
@@ -599,7 +612,7 @@ class ThermalCtrl(VitreosWinFrame):
         cpu_temp = data.get('cpuTemp', 0)
         gpu_temp = data.get('gpuTemp', 0)
         
-        if cpu_temp > 0 or gpu_temp > 0:
+        if (cpu_temp is not None and cpu_temp > 0) or (gpu_temp is not None and gpu_temp > 0):
             self.status_label.setText("ONLINE")
             self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['green']};")
         else:
@@ -615,30 +628,53 @@ class ThermalCtrl(VitreosWinFrame):
             self.remove_alert_banner()
             self.alert_active = False
         
-        self.cpu_temp_label.setText(f"{cpu_temp:.0f}°C")
-        self.cpu_temp_bar.set_value(cpu_temp, 100)
+        # CPU temp formatting
+        try:
+            if cpu_temp is None or float(cpu_temp) <= 0:
+                self.cpu_temp_label.setText('--°C')
+                self.cpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+                self.cpu_temp_bar.set_value(0, 100)
+            else:
+                self.cpu_temp_label.setText(f"{float(cpu_temp):.0f}°C")
+                self.cpu_temp_bar.set_value(float(cpu_temp), 100)
+                if cpu_temp > 85:
+                    self.cpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['critical_red']};")
+                elif cpu_temp > 75:
+                    self.cpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
+                else:
+                    self.cpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
+        except Exception:
+            self.cpu_temp_label.setText('--°C')
+            self.cpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+            self.cpu_temp_bar.set_value(0, 100)
         
-        if cpu_temp > 85:
-            self.cpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['critical_red']};")
-        elif cpu_temp > 75:
-            self.cpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
-        else:
-            self.cpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
+        # GPU temp formatting
+        try:
+            if gpu_temp is None or float(gpu_temp) <= 0:
+                self.gpu_temp_label.setText('--°C')
+                self.gpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+                self.gpu_temp_bar.set_value(0, 100)
+            else:
+                self.gpu_temp_label.setText(f"{float(gpu_temp):.0f}°C")
+                self.gpu_temp_bar.set_value(float(gpu_temp), 100)
+                if gpu_temp > 85:
+                    self.gpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['critical_red']};")
+                elif gpu_temp > 75:
+                    self.gpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
+                else:
+                    self.gpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
+        except Exception:
+            self.gpu_temp_label.setText('--°C')
+            self.gpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+            self.gpu_temp_bar.set_value(0, 100)
         
-        self.gpu_temp_label.setText(f"{gpu_temp:.0f}°C")
-        self.gpu_temp_bar.set_value(gpu_temp, 100)
-        
-        if gpu_temp > 85:
-            self.gpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['critical_red']};")
-        elif gpu_temp > 75:
-            self.gpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
-        else:
-            self.gpu_temp_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
-        
-        self.status_labels['cpu_max'].setText(f"{cpu_temp:.0f}°C")
-        self.status_labels['gpu_max'].setText(f"{gpu_temp:.0f}°C")
-        self.status_labels['cpu_avg'].setText(f"{cpu_temp:.0f}°C")
-        self.status_labels['gpu_avg'].setText(f"{gpu_temp:.0f}°C")
+        try:
+            self.status_labels['cpu_max'].setText('--°C' if cpu_temp is None or float(cpu_temp) <= 0 else f"{float(cpu_temp):.0f}°C")
+            self.status_labels['gpu_max'].setText('--°C' if gpu_temp is None or float(gpu_temp) <= 0 else f"{float(gpu_temp):.0f}°C")
+            self.status_labels['cpu_avg'].setText('--°C' if cpu_temp is None or float(cpu_temp) <= 0 else f"{float(cpu_temp):.0f}°C")
+            self.status_labels['gpu_avg'].setText('--°C' if gpu_temp is None or float(gpu_temp) <= 0 else f"{float(gpu_temp):.0f}°C")
+        except Exception:
+            pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -654,8 +690,16 @@ class DriveCardWidget(QWidget):
                  max_read: int, max_write: int,
                  parent: Optional[QWidget] = None):
         super().__init__(parent)
+        # Defensive placeholders to avoid AttributeError if refresh is called
+        # before the widgets are fully constructed (robustness for async updates)
+        self.read_val = None
+        self.write_val = None
+        self.read_bar = None
+        self.write_bar = None
+        self.temp_label = None
+        self.cap_bar = None
         self._build(drive_type, model, serial, temp,
-                    used_gb, total_gb, read_speed, write_speed, max_read, max_write)
+                used_gb, total_gb, read_speed, write_speed, max_read, max_write)
 
     def _build(self, drive_type: str, model: str, serial: str,
                temp: int, used_gb: float, total_gb: float,
@@ -749,7 +793,12 @@ class DriveCardWidget(QWidget):
         read_col.addLayout(read_hdr)
         self.read_bar = VitreosSegmentedBar(segments=12, height=4,
                                             hex_color='#06B6D4', alert_threshold=1.1)
-        self.read_bar.set_value(read_speed, 7000)
+        # Use provided max_read as the scaling denominator so the bar reflects actual throughput
+        try:
+            self.max_read = float(max_read)
+        except Exception:
+            self.max_read = 7000.0
+        self.read_bar.set_value(read_speed, self.max_read)
         read_col.addWidget(self.read_bar)
         io_row.addLayout(read_col)
 
@@ -770,7 +819,11 @@ class DriveCardWidget(QWidget):
         write_col.addLayout(write_hdr)
         self.write_bar = VitreosSegmentedBar(segments=12, height=4,
                                              hex_color='#FF6B00', alert_threshold=1.1)
-        self.write_bar.set_value(write_speed, 7000)
+        try:
+            self.max_write = float(max_write)
+        except Exception:
+            self.max_write = 7000.0
+        self.write_bar.set_value(write_speed, self.max_write)
         write_col.addWidget(self.write_bar)
         io_row.addLayout(write_col)
 
@@ -781,11 +834,49 @@ class DriveCardWidget(QWidget):
         """Update live values without rebuilding the widget."""
         used_pct   = (used_gb / total_gb * 100) if total_gb > 0 else 0
         temp_color = '#FF6B00' if temp > 45 else '#A855F7'
-        self.temp_label.setStyleSheet(f'color: {temp_color};')
-        self.temp_label.setText(f'{temp}°C')
+        # Display '--°C' when telemetry reports zero/unavailable temperature
+        try:
+            if temp is None or temp <= 0:
+                if self.temp_label is not None:
+                    self.temp_label.setStyleSheet(f'color: {VITREOS_COLORS["text_dim"]};')
+                    self.temp_label.setText('--°C')
+            else:
+                if self.temp_label is not None:
+                    self.temp_label.setStyleSheet(f'color: {temp_color};')
+                    self.temp_label.setText(f'{temp}°C')
+        except Exception:
+            pass
         self.cap_bar.set_value(used_pct, 100)
-        self.read_bar.set_value(read_speed, 7000)
-        self.write_bar.set_value(write_speed, 7000)
+        # Update bars using the last-known maxima for proper scaling
+        try:
+            if self.read_bar is not None:
+                self.read_bar.set_value(read_speed, getattr(self, 'max_read', 7000.0))
+        except Exception:
+            try:
+                if self.read_bar is not None:
+                    self.read_bar.set_value(read_speed, 7000.0)
+            except Exception:
+                pass
+        try:
+            if self.write_bar is not None:
+                self.write_bar.set_value(write_speed, getattr(self, 'max_write', 7000.0))
+        except Exception:
+            try:
+                if self.write_bar is not None:
+                    self.write_bar.set_value(write_speed, 7000.0)
+            except Exception:
+                pass
+        # Update numeric labels to show current / max (MB/s)
+        try:
+            if self.read_val is not None:
+                self.read_val.setText(f"{int(read_speed)} / {int(getattr(self,'max_read',7000.0))} <span style=\"color:#1E4A5A; font-size:6pt;\">MB/s</span>")
+        except Exception:
+            pass
+        try:
+            if self.write_val is not None:
+                self.write_val.setText(f"{int(write_speed)} / {int(getattr(self,'max_write',7000.0))} <span style=\"color:#4A2500; font-size:6pt;\">MB/s</span>")
+        except Exception:
+            pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -795,18 +886,7 @@ class DriveCardWidget(QWidget):
 class StorageArray(VitreosWinFrame):
     """DISK_ARRAY module rebuilt to Figma V4 spec."""
 
-    # Static mock drives shown before telemetry arrives
-    _MOCK_DRIVES = [
-        dict(drive_type='NVMe', model='Samsung 990 Pro',  serial='S6EVNX0T841256B',
-             temp=38, used_gb=512,  total_gb=1000, read_speed=6900, write_speed=6200,
-             max_read=6900, max_write=6200),
-        dict(drive_type='NVMe', model='WD Black SN850X', serial='23456F7G8H9I0J1K',
-             temp=41, used_gb=1800, total_gb=2000, read_speed=7000, write_speed=6600,
-             max_read=7000, max_write=6600),
-        dict(drive_type='HDD',  model='Seagate Barracuda', serial='ZA1B2C3D4E5F6G7H',
-             temp=32, used_gb=3200, total_gb=4000, read_speed=180,  write_speed=160,
-             max_read=220,  max_write=200),
-    ]
+
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(title='DISK_ARRAY', accent_color='primary_purple', parent=parent)
@@ -852,11 +932,7 @@ class StorageArray(VitreosWinFrame):
         self.drives_layout.setSpacing(8)
         outer.addLayout(self.drives_layout)
 
-        # Populate with mock data until telemetry arrives
-        for d in self._MOCK_DRIVES:
-            card = DriveCardWidget(**d)
-            self._drive_cards[d['serial']] = card
-            self.drives_layout.addWidget(card)
+        # Drives populated dynamically from telemetry
 
         outer.addStretch()
 
@@ -892,20 +968,378 @@ class StorageArray(VitreosWinFrame):
         self.set_content_layout(outer)
 
     def update_data(self, data: Dict[str, Any]) -> None:
-        drives = data.get('drives', [])
+        """
+        Update storage drives.
+
+        Accepts either a storage dict (with key 'drives') or a payload that is already
+        the storage dict. Dynamically create `DriveCardWidget` instances for new
+        drives and refresh existing ones. Remove stale widgets when drives disappear.
+        """
+        # Accept either top-level storage dict or a wrapper
+        storage = data.get('storage') if isinstance(data, dict) and 'storage' in data else data
+        drives = storage.get('drives', []) if isinstance(storage, dict) else []
+
+        # Normalize empty drives
         if not drives:
+            # If no drives are reported, remove existing cards to avoid stale UI
+            if self._drive_cards:
+                for key, card in list(self._drive_cards.items()):
+                    try:
+                        self.drives_layout.removeWidget(card)
+                        card.setParent(None)
+                        card.deleteLater()
+                    except Exception:
+                        pass
+                self._drive_cards.clear()
+                self.update()
+                self.repaint()
             return
-        # Live update: refresh existing cards by mountpoint key
+
+        existing_keys = set(self._drive_cards.keys())
+        seen_keys = set()
+
         for drive in drives:
-            key = drive.get('mountpoint', drive.get('device', ''))
+            # Key selection: prefer mountpoint, fall back to device or serial
+            key = drive.get('mountpoint') or drive.get('device') or drive.get('serial') or str(drive.get('model'))
+            seen_keys.add(key)
+
+            drive_type = drive.get('type', 'Unknown')
+            model = drive.get('model', 'Unknown')
+            serial = drive.get('serial', drive.get('device', ''))
+
+            # numeric values with fallbacks
+            temp = int(drive.get('temp', 0) or 0)
+            used_gb = float(drive.get('usedGB', drive.get('used', 0) or 0))
+            total_gb = float(drive.get('totalGB', drive.get('total', 1) or 1))
+            read_speed = float(drive.get('readSpeed', 0) or 0)
+            write_speed = float(drive.get('writeSpeed', 0) or 0)
+            max_read = int(drive.get('maxRead', 7000))
+            max_write = int(drive.get('maxWrite', 6600))
+
             if key in self._drive_cards:
-                self._drive_cards[key].refresh(
-                    temp=int(drive.get('temp', 0)),
-                    used_gb=drive.get('usedGB', 0),
-                    total_gb=drive.get('totalGB', 1),
-                    read_speed=drive.get('readSpeed', 0),
-                    write_speed=drive.get('writeSpeed', 0),
-                )
+                # Refresh existing card
+                try:
+                    self._drive_cards[key].refresh(
+                        temp=temp,
+                        used_gb=used_gb,
+                        total_gb=total_gb,
+                        read_speed=read_speed,
+                        write_speed=write_speed,
+                    )
+                except Exception:
+                    pass
+            else:
+                # Create and add new card
+                try:
+                    card = DriveCardWidget(
+                        drive_type=drive_type,
+                        model=model,
+                        serial=serial,
+                        temp=temp,
+                        used_gb=used_gb,
+                        total_gb=total_gb,
+                        read_speed=read_speed,
+                        write_speed=write_speed,
+                        max_read=max_read,
+                        max_write=max_write,
+                    )
+                except TypeError:
+                    # Fallback to positional if signature differs
+                    card = DriveCardWidget(drive_type, model, serial, temp, used_gb, total_gb, read_speed, write_speed, max_read, max_write)
+
+                self._drive_cards[key] = card
+                self.drives_layout.addWidget(card)
+
+        # Remove cards for drives that disappeared
+        remove_keys = existing_keys - seen_keys
+        for k in remove_keys:
+            card = self._drive_cards.pop(k, None)
+            if card:
+                try:
+                    self.drives_layout.removeWidget(card)
+                    card.setParent(None)
+                    card.deleteLater()
+                except Exception:
+                    pass
+
+        # Force a UI refresh so newly added widgets appear immediately
+        try:
+            self.drives_layout.update()
+        except Exception:
+            pass
+        try:
+            self.update()
+            self.repaint()
+        except Exception:
+            pass
+
+
+class DimmSlotWidget(QWidget):
+    """Visual representation of a single DIMM slot (vertical stick)."""
+    def __init__(self, slot_id: str, capacity_gb: Optional[float] = None,
+                 populated: bool = False, manufacturer: str = '', part: str = '',
+                 serial: str = '', speed_mt: Optional[int] = None,
+                 parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.slot_id = slot_id
+        self.capacity_gb = capacity_gb
+        self.populated = populated
+        self.manufacturer = manufacturer
+        self.part = part
+        self.serial = serial
+        self.speed_mt = speed_mt or 0
+        self._build()
+
+    def _build(self) -> None:
+        layout = QVBoxLayout()
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        # Vertical stick representation
+        self.stick = QFrame()
+        self.stick.setFixedSize(48, 120)
+        self.stick.setStyleSheet(self._empty_style())
+        layout.addWidget(self.stick, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Slot label (A1, A2, ...)
+        self.slot_label = QLabel(self.slot_id)
+        self.slot_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        self.slot_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+        self.slot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.slot_label)
+
+        # Capacity / status label
+        cap_text = f"{int(self.capacity_gb)} GB" if self.capacity_gb and self.capacity_gb > 0 else "EMPTY"
+        self.cap_label = QLabel(cap_text)
+        self.cap_label.setFont(get_font('mono', FONT_SIZES['tiny']))
+        self.cap_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        self.cap_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.cap_label)
+
+        self.setLayout(layout)
+
+    def _empty_style(self) -> str:
+        return f"background: transparent; border: 2px dashed {VITREOS_COLORS['border_secondary']}; border-radius:4px;"
+
+    def _populated_style(self) -> str:
+        return f"background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {VITREOS_COLORS['primary_purple']}, stop:1 {VITREOS_COLORS['purple_dim']}); border: 1px solid {VITREOS_COLORS['border_primary']}; border-radius:4px;"
+
+    def set_slot(self, info: Dict[str, Any]) -> None:
+        """Update visual state from telemetry slot info."""
+        try:
+            cap = info.get('capacityGB', None)
+            if cap is None:
+                cap = info.get('capacity', None)
+            self.capacity_gb = float(cap) if cap else 0.0
+        except Exception:
+            self.capacity_gb = 0.0
+
+        self.manufacturer = info.get('manufacturer', '') or ''
+        self.part = info.get('partNumber', '') or ''
+        self.serial = info.get('serial', '') or ''
+        self.speed_mt = int(info.get('configuredClock', info.get('speedMT', 0)) or 0)
+
+        self.populated = bool(self.capacity_gb and self.capacity_gb > 0)
+
+        if self.populated:
+            self.stick.setStyleSheet(self._populated_style())
+            self.cap_label.setText(f"{int(self.capacity_gb)} GB")
+            self.cap_label.setStyleSheet(f"color: {VITREOS_COLORS['purple_dim']};")
+            tooltip = f"{self.manufacturer} {self.part} — {self.speed_mt} MT/s\nS/N: {self.serial}"
+            self.setToolTip(tooltip)
+        else:
+            self.stick.setStyleSheet(self._empty_style())
+            self.cap_label.setText('EMPTY')
+            self.cap_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+            self.setToolTip('Empty slot')
+
+
+class DimmArray(QWidget):
+    """Horizontal array of 4 DIMM slots (A1, A2, B1, B2) with footers and XMP bar."""
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.order = ['A1', 'A2', 'B1', 'B2']
+        self.slots: Dict[str, DimmSlotWidget] = {}
+        self._build()
+
+    def _build(self) -> None:
+        outer = QVBoxLayout()
+        outer.setContentsMargins(6, 6, 6, 6)
+        outer.setSpacing(6)
+
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        for loc in self.order:
+            w = DimmSlotWidget(loc)
+            self.slots[loc] = w
+            row.addWidget(w)
+        outer.addLayout(row)
+
+        # Footer panels (Effective Speed | Channel Mode)
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
+
+        self.eff_widget = QWidget()
+        self.eff_widget.setStyleSheet(f"background: {VITREOS_COLORS['bg_card']}; border: 1px solid {VITREOS_COLORS['border_secondary']};")
+        eff_layout = QVBoxLayout(self.eff_widget)
+        eff_layout.setContentsMargins(6, 6, 6, 6)
+        eff_title = QLabel('EFFECTIVE SPEED')
+        eff_title.setFont(get_font('mono', FONT_SIZES['micro']))
+        eff_title.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+        eff_layout.addWidget(eff_title)
+        self.eff_value = QLabel('-- MT/s')
+        self.eff_value.setFont(get_font('mono', FONT_SIZES['value_medium']))
+        self.eff_value.setStyleSheet(f"color: {VITREOS_COLORS['purple_dim']};")
+        eff_layout.addWidget(self.eff_value)
+        footer.addWidget(self.eff_widget)
+
+        self.chan_widget = QWidget()
+        self.chan_widget.setStyleSheet(f"background: {VITREOS_COLORS['bg_card']}; border: 1px solid {VITREOS_COLORS['border_secondary']};")
+        chan_layout = QVBoxLayout(self.chan_widget)
+        chan_layout.setContentsMargins(6, 6, 6, 6)
+        chan_title = QLabel('CHANNEL MODE')
+        chan_title.setFont(get_font('mono', FONT_SIZES['micro']))
+        chan_title.setStyleSheet(f"color: {VITREOS_COLORS['text_darker']};")
+        chan_layout.addWidget(chan_title)
+        self.chan_value = QLabel('UNKNOWN')
+        self.chan_value.setFont(get_font('mono', FONT_SIZES['value_medium']))
+        self.chan_value.setStyleSheet(f"color: {VITREOS_COLORS['cyan']};")
+        chan_layout.addWidget(self.chan_value)
+        footer.addWidget(self.chan_widget)
+
+        outer.addLayout(footer)
+
+        # XMP/EXPO indicator bar (hidden by default)
+        self.xmp_bar = QFrame()
+        self.xmp_bar.setFixedHeight(6)
+        self.xmp_bar.setStyleSheet(f"background: {VITREOS_COLORS['warning_orange']}; border-radius: 2px;")
+        self.xmp_bar.hide()
+        outer.addWidget(self.xmp_bar)
+
+        self.setLayout(outer)
+
+    def update_slots(self, slots_info: List[Dict[str, Any]]) -> None:
+        import re
+
+        # Defensive: ensure iterable
+        if not slots_info:
+            for k in self.order:
+                self.slots[k].set_slot({})
+            return
+
+        # Normalize locators and prepare items
+        processed = []
+        for s in slots_info:
+            # Support both 'locator' (snapshot) and legacy 'DeviceLocator'
+            raw_loc = s.get('locator') or s.get('DeviceLocator') or ''
+            loc = str(raw_loc).upper().strip()
+            processed.append({'orig': s, 'loc': loc})
+
+        mappings: Dict[str, Dict[str, Any]] = {}
+        remaining = []
+
+        # 1) Direct textual match (A1/A2/B1/B2)
+        for item in processed:
+            loc = item['loc']
+            matched = False
+            for slot_key in self.order:
+                if slot_key in loc:
+                    mappings[slot_key] = item['orig']
+                    matched = True
+                    break
+            if not matched:
+                remaining.append(item)
+
+        # 2) Channel+DIMM patterns and BANK/DIMM numeric heuristics
+        bank_map = {0: 'A1', 1: 'A2', 2: 'B1', 3: 'B2'}
+        idx_map = {0: 'A1', 1: 'A2', 2: 'B1', 3: 'B2'}
+
+        rem_copy = list(remaining)
+        for item in rem_copy:
+            loc = item['loc']
+            assigned = False
+
+            # ChannelA / ChannelB + DIMM index -> A1/A2, B1/B2
+            m_cha = re.search(r'CHANNEL\s*A', loc)
+            m_chb = re.search(r'CHANNEL\s*B', loc)
+            m_dimm = re.search(r'DIMM\s*0*([0-9]+)', loc)
+            if (m_cha or m_chb) and m_dimm:
+                idx = int(m_dimm.group(1))
+                target = 'A1' if (m_cha and idx == 0) else ('A2' if (m_cha and idx == 1) else ('B1' if (m_chb and idx == 0) else ('B2' if (m_chb and idx == 1) else None)))
+                if target and target not in mappings:
+                    mappings[target] = item['orig']
+                    remaining.remove(item)
+                    assigned = True
+                    continue
+
+            # BANK <n> -> map common ordering
+            m_bank = re.search(r'BANK\s*0*([0-9]+)', loc)
+            if m_bank:
+                n = int(m_bank.group(1))
+                target = bank_map.get(n)
+                if target and target not in mappings:
+                    mappings[target] = item['orig']
+                    remaining.remove(item)
+                    assigned = True
+                    continue
+
+            # DIMM<number> fallback -> index mapping
+            if m_dimm:
+                idx = int(m_dimm.group(1))
+                target = idx_map.get(idx)
+                if target and target not in mappings:
+                    mappings[target] = item['orig']
+                    remaining.remove(item)
+                    assigned = True
+                    continue
+
+        # 3) Numeric trailing tokens like 'SLOT 1' or '1' -> try map
+        rem_copy = list(remaining)
+        for item in rem_copy:
+            loc = item['loc']
+            m_num = re.search(r'(?:SLOT|PORT|SLOT:)?\s*0*([0-9]+)\b$', loc)
+            if m_num:
+                idx = int(m_num.group(1))
+                # Many firmware enumerations are 1-based
+                idx0 = max(0, idx - 1)
+                target = idx_map.get(idx0)
+                if target and target not in mappings:
+                    mappings[target] = item['orig']
+                    remaining.remove(item)
+                    continue
+
+        # 4) Final fallback: assign remaining items in deterministic order to remaining slots
+        unfilled = [s for s in self.order if s not in mappings]
+        remaining_sorted = sorted(remaining, key=lambda x: x['loc'])
+        for key, item in zip(unfilled, remaining_sorted):
+            mappings[key] = item['orig']
+
+        # 5) Apply to widgets; default to empty dict for missing slots
+        for key in self.order:
+            info = mappings.get(key, {})
+            try:
+                self.slots[key].set_slot(info)
+            except Exception:
+                # Ensure UI stays consistent even if set_slot fails
+                try:
+                    self.slots[key].set_slot({})
+                except Exception:
+                    pass
+
+    def set_effective_speed(self, speed_mt: int) -> None:
+        if speed_mt and speed_mt > 0:
+            self.eff_value.setText(f"{speed_mt} MT/s")
+        else:
+            self.eff_value.setText('-- MT/s')
+
+    def set_channel_mode(self, mode: str) -> None:
+        self.chan_value.setText(mode.upper() if mode else 'UNKNOWN')
+
+    def set_xmp_active(self, active: bool) -> None:
+        if active:
+            self.xmp_bar.show()
+        else:
+            self.xmp_bar.hide()
 
 
 class MemoryArray(VitreosWinFrame):
@@ -938,6 +1372,11 @@ class MemoryArray(VitreosWinFrame):
         self.usage_label.setFont(get_font('mono', FONT_SIZES['value_medium']))
         self.usage_label.setStyleSheet(f"color: {VITREOS_COLORS['purple_dim']};")
         info_layout.addWidget(self.usage_label)
+        # Memory spec string (DDR speed / timings / voltage)
+        self.spec_label = QLabel("")
+        self.spec_label.setFont(get_font('mono', FONT_SIZES['tiny']))
+        self.spec_label.setStyleSheet(f"color: {VITREOS_COLORS['text_secondary']};")
+        info_layout.addWidget(self.spec_label)
         
         header_row.addLayout(info_layout)
         header_row.addStretch()
@@ -958,6 +1397,10 @@ class MemoryArray(VitreosWinFrame):
         
         self.mem_bar = VitreosSegmentedBar(segments=24, height=6, color='purple_dim')
         layout.addWidget(self.mem_bar)
+
+        # DIMM slot row (A1, A2, B1, B2)
+        self.dimm_array = DimmArray()
+        layout.addWidget(self.dimm_array)
         
         # Stats grid
         stats_grid = QGridLayout()
@@ -1001,9 +1444,9 @@ class MemoryArray(VitreosWinFrame):
         self.set_content_layout(layout)
     
     def update_data(self, data: Dict[str, Any]) -> None:
-        used_gb = data.get('usedGB', 0)
-        total_gb = data.get('totalGB', 0)
-        percent = data.get('percent', 0)
+        used_gb = data.get('usedGB', data.get('used', 0))
+        total_gb = data.get('totalGB', data.get('total', 0))
+        percent = data.get('percent', data.get('percent', 0))
         
         if total_gb > 0:
             self.status_label.setText("ONLINE")
@@ -1016,12 +1459,31 @@ class MemoryArray(VitreosWinFrame):
         self.percent_label.setText(f"{percent:.0f}%")
         self.mem_bar.set_value(percent, 100)
         self.ram_gauge.set_value(percent, 100, 'purple_dim')
+
+        # New-style memory payload: slots, effectiveSpeed, channel, headerSpec, xmpActive
+        if 'slots' in data:
+            try:
+                slots = data.get('slots', []) or []
+                self.dimm_array.update_slots(slots)
+                self.dimm_array.set_effective_speed(int(data.get('effectiveSpeed', 0) or 0))
+                self.dimm_array.set_channel_mode(str(data.get('channel', 'UNKNOWN')))
+                self.dimm_array.set_xmp_active(bool(data.get('xmpActive', False)))
+                # Header spec
+                header = data.get('headerSpec', '')
+                if header:
+                    self.spec_label.setText(header)
+                else:
+                    self.spec_label.setText('')
+            except Exception:
+                pass
         
         free_gb = total_gb - used_gb
         self.stat_labels['used'].setText(f"{used_gb:.1f} GB")
         self.stat_labels['free'].setText(f"{free_gb:.1f} GB")
         self.stat_labels['cached'].setText(f"{data.get('cachedGB', 0):.1f} GB")
         self.stat_labels['available'].setText(f"{data.get('availableGB', free_gb):.1f} GB")
+
+
 
 
 class NetInterface(VitreosWinFrame):

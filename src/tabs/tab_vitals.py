@@ -2,7 +2,7 @@
 """
 Vitreos Vitals Tab - System Overview Dashboard
 """
-from typing import Dict, Any, Optional
+from typing import Optional, Dict, Any
 from PyQt6.QtWidgets import QWidget, QGridLayout
 from src.ui.vitreos_core_ui import VitreosModule
 
@@ -38,6 +38,15 @@ class VitalsTab(QWidget):
     
     def update_stats(self, stats: Dict[str, Any]) -> None:
         """Update all vitals modules with new statistics"""
+        # helper: format temperatures (show '--°C' when unavailable)
+        def _fmt_temp(t: Any) -> str:
+            try:
+                if t is None:
+                    return '--°C'
+                t_f = float(t)
+                return '--°C' if t_f <= 0 else f"{t_f:.0f}°C"
+            except Exception:
+                return '--°C'
         # CPU Module
         cpu_pct = stats.get('cpu_percent', 0)
         self.cpu_module.set_primary_value(f"{cpu_pct}%")
@@ -55,7 +64,15 @@ class VitalsTab(QWidget):
         # GPU Module
         gpu_usage = stats.get('gpu_usage', 0)
         self.gpu_module.set_primary_value(f"{gpu_usage}%")
-        self.gpu_module.set_secondary_value(f"{stats.get('gpu_temp', 0)}°C")
+        # Sync GPU model/name into the module header if available
+        gpu_name = stats.get('gpu_name', None)
+        if gpu_name and 'Unknown' not in str(gpu_name) and 'NO GPU' not in str(gpu_name):
+            try:
+                self.gpu_module.set_title(f"GPU — {gpu_name}")
+            except Exception:
+                pass
+        # Show temperature with N/A handling
+        self.gpu_module.set_secondary_value(_fmt_temp(stats.get('gpu_temp', 0)))
         
         if gpu_usage > 90:
             self.gpu_module.set_hazard_level("CRITICAL", "#ff0000")
@@ -86,8 +103,8 @@ class VitalsTab(QWidget):
         
         # Thermal Module
         cpu_temp = stats.get('cpu_temp', 0)
-        self.thermal_module.set_primary_value(f"{cpu_temp}°C")
-        self.thermal_module.set_secondary_value(f"GPU: {stats.get('gpu_temp', 0)}°C")
+        self.thermal_module.set_primary_value(_fmt_temp(cpu_temp))
+        self.thermal_module.set_secondary_value(f"GPU: {_fmt_temp(stats.get('gpu_temp', 0))}")
         
         if cpu_temp > 85:
             self.thermal_module.set_hazard_level("CRITICAL", "#ff0000")

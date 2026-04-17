@@ -8,13 +8,14 @@ Performance: 125Hz polling (8ms intervals) with <1ms execution time
 from typing import Dict, Any, Optional
 from PyQt6.QtCore import QThread, pyqtSignal
 import time
+from src.core.vitreos_logger import v_debug, v_info, v_error
 
 try:
     import vitreos_pulse
     PULSE_AVAILABLE = True
 except ImportError:
     PULSE_AVAILABLE = False
-    print("[VITREOS] vitreos_pulse not available - falling back to Python telemetry")
+    v_info("vitreos_pulse not available - falling back to Python telemetry")
 
 
 class RustTelemetryWorker(QThread):
@@ -32,7 +33,8 @@ class RustTelemetryWorker(QThread):
         
         self.running = False
         self.pulse = None
-        self.poll_interval = 0.008  # 8ms = 125Hz
+        # Enforce 1Hz polling for Rust worker to match system-wide policy
+        self.poll_interval = 1.0  # 1s = 1Hz
         self.debug_counter = 0
         
         if not PULSE_AVAILABLE:
@@ -41,7 +43,7 @@ class RustTelemetryWorker(QThread):
         # Initialize Rust engine
         self.pulse = vitreos_pulse.VitreosPulse()
         
-        print("[VITREOS] Rust telemetry engine initialized")
+        v_info("Rust telemetry engine initialized")
     
     def run(self) -> None:
         """Main telemetry loop - runs in background thread."""
@@ -65,11 +67,7 @@ class RustTelemetryWorker(QThread):
                 
                 # Debug logging every 3 seconds
                 self.debug_counter += 1
-                if self.debug_counter % 375 == 0:  # 375 polls = 3 seconds at 125Hz
-                    cpu_load = data.get('cpu', {}).get('totalLoad', 0)
-                    gpu_temp = data.get('gpu', {}).get('temp', 0)
-                    elapsed_ms = (time.perf_counter() - start_time) * 1000
-                    print(f"[PULSE] Poll #{self.debug_counter}: CPU {cpu_load:.0f}% | GPU {gpu_temp:.0f}°C | {elapsed_ms:.2f}ms")
+                # Periodic debug logging suppressed to avoid console spam
                 
                 # Emit to main thread
                 self.data_ready.emit(data)
@@ -82,7 +80,7 @@ class RustTelemetryWorker(QThread):
                 else:
                     # Warn if we're falling behind
                     if self.debug_counter % 125 == 0:  # Every second
-                        print(f"[PULSE] Warning: Poll took {elapsed*1000:.2f}ms (target: {self.poll_interval*1000:.2f}ms)")
+                        v_debug(f"Poll warning: took {elapsed*1000:.2f}ms (target: {self.poll_interval*1000:.2f}ms)")
             
             except Exception as e:
                 self.error_occurred.emit(f"Telemetry error: {e}")

@@ -4,11 +4,10 @@ Specialized UI components matching Figma design specifications
 """
 
 from typing import Optional, List, Tuple
-from PyQt6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLayout, QGraphicsDropShadowEffect
+from PyQt6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QTextEdit, QLayout, QGraphicsDropShadowEffect
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal, QEvent
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QLinearGradient, QPaintEvent, QFont, QEnterEvent, QMouseEvent
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QPaintEvent, QFont, QEnterEvent, QMouseEvent
 from datetime import datetime
-import math
 
 from src.ui.vitreos_theme import (
     VITREOS_COLORS, FONT_SIZES, get_color, get_font, hex_to_qcolor
@@ -81,9 +80,9 @@ class VitreosFrame(QFrame):
         self.bracket_color.setAlpha(102)  # 40% opacity
         self.bracket_size = 12  # Length of bracket arms
     
-    def paintEvent(self, event: QPaintEvent) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         """Draw corner brackets on frame."""
-        super().paintEvent(event)
+        super().paintEvent(a0)
         
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
@@ -212,7 +211,7 @@ class VitreosCircularGauge(QWidget):
         self.color_name = color
         self.update()
     
-    def paintEvent(self, event: QPaintEvent) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
@@ -253,7 +252,7 @@ class VitreosBarcode(QWidget):
         self.setFixedHeight(height)
         self.setMinimumWidth(50)
     
-    def paintEvent(self, event: QPaintEvent) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
@@ -481,12 +480,12 @@ class NeonSwitch(QWidget):
         self.setFixedSize(40, 20)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
     
-    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
+    def mousePressEvent(self, a0: QMouseEvent) -> None:
         self.checked = not self.checked
         self.toggled.emit(self.checked)
         self.update()
     
-    def paintEvent(self, event: QPaintEvent) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
@@ -558,7 +557,7 @@ class VitreosSegmentedBar(QWidget):
         self.status_override = status
         self.update()
     
-    def paintEvent(self, event: QPaintEvent) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         """Draw segmented bar with glow effects."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -644,7 +643,7 @@ class VitreosVerticalBar(QWidget):
         self.max_value = max_value
         self.update()
     
-    def paintEvent(self, event: QPaintEvent) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         """Draw vertical segmented bar (bottom-to-top fill)."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -911,9 +910,9 @@ class VitreosWinFrame(QFrame):
             }}
         """)
     
-    def paintEvent(self, event: QPaintEvent) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         """Draw scanline overlay effect (Figma spec: every 2px)."""
-        super().paintEvent(event)
+        super().paintEvent(a0)
         
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)

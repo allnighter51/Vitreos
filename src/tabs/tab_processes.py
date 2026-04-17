@@ -3,13 +3,13 @@
 Vitreos Processes Tab - Tactical Process Management
 Features: High-density grid, Affinity Lock, Entropy Scanner, Thermal Pressure Index
 """
-import math
-import psutil
-from typing import Dict, Any, List, Optional
+from typing import Optional, List, Dict, Any
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QTableWidget, QTableWidgetItem, QHeaderView, QLabel)
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QColor, QPainter, QBrush
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QBrush, QPaintEvent
+import psutil
+import math
 
 try:
     from src.ui.vitreos_theme import VITREOS_COLORS, get_font
@@ -29,7 +29,7 @@ class TPIBar(QWidget):
         self.value = max(0, min(100, value))
         self.update()
     
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         

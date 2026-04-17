@@ -81,7 +81,7 @@ impl NetworkMonitor {
             networks.iter().next().map(|(name, _)| name.as_str()).unwrap_or("ETH")
         };
         
-        let (download_mbps, upload_mbps) = if let Some(data) = networks.get(adapter_name) {
+        let (download_mbps, upload_mbps) = if let Some((_, data)) = networks.iter().find(|(name, _)| name == &adapter_name) {
             let rx_bytes = data.total_received();
             let tx_bytes = data.total_transmitted();
             

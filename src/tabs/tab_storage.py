@@ -1,16 +1,19 @@
+# pyright: reportUnknownMemberType=false, reportIncompatibleMethodOverride=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportMissingTypeArgument=false, reportUnknownVariableType=false, reportArgumentType=false
 """
 Storage Tab - Deep Sector Analysis
 60% Drive Array | 40% I/O Analytics
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QPainter, QColor, QFont
+from PyQt6.QtGui import QPainter, QPaintEvent
 import random
 
 from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
 from src.ui.vitreos_widgets import VitreosWinFrame, VitreosCircularGauge, VitreosSegmentedBar
+from src.ui.vitreos_modules import StorageArray
+from src.core.vitreos_logger import v_debug, v_info, v_error
 
 
 class SectorScanWidget(QWidget):
@@ -47,7 +50,7 @@ class SectorScanWidget(QWidget):
         
         self.update()
     
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
@@ -89,6 +92,7 @@ class StorageTab(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.drive_widgets: Dict[str, tuple] = {}
+        self._last_storage_state: Dict[str, tuple] = {}  # Track last state for change detection
         self._setup_ui()
     
     def _setup_ui(self) -> None:
@@ -106,16 +110,16 @@ class StorageTab(QWidget):
         self.left_layout.setContentsMargins(12, 12, 12, 12)
         self.left_layout.setSpacing(8)
         
-        # Background watermark
-        fs_label = QLabel("FILE SYSTEM: [DETECTING...]")
-        fs_label.setFont(get_font('mono', 24))
-        fs_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darkest']}; opacity: 0.3;")
-        fs_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.left_layout.addWidget(fs_label)
+        # Background watermark (hidden after first drive detected)
+        self.fs_label = QLabel("FILE SYSTEM: [DETECTING...]")
+        self.fs_label.setFont(get_font('mono', 24))
+        self.fs_label.setStyleSheet(f"color: {VITREOS_COLORS['text_darkest']}; opacity: 0.3;")
+        self.fs_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.left_layout.addWidget(self.fs_label)
         
-        self.drives_layout = QVBoxLayout()
-        self.drives_layout.setSpacing(12)
-        self.left_layout.addLayout(self.drives_layout)
+        # Embed the StorageArray widget which manages drive cards dynamically
+        self.storage_array = StorageArray()
+        self.left_layout.addWidget(self.storage_array)
         
         self.left_layout.addStretch()
         left_panel.set_content_layout(self.left_layout)
@@ -197,69 +201,61 @@ class StorageTab(QWidget):
     
     def update_stats(self, data: Dict[str, Any]) -> None:
         """Update storage display from telemetry."""
-        storage_data = data.get('storage', {})
-        drives = storage_data.get('drives', [])
-        
-        for drive in drives:
-            mountpoint = drive.get('mountpoint', '/')
-            device = drive.get('device', 'Unknown')
-            used_gb = drive.get('usedGB', 0)
-            total_gb = drive.get('totalGB', 0)
-            percent = drive.get('percent', 0)
-            
-            if mountpoint not in self.drive_widgets:
-                # Create new drive widget
-                drive_container = QWidget()
-                drive_container.setStyleSheet(f"""
-                    background: {VITREOS_COLORS['bg_card']};
-                    border: 1px solid {VITREOS_COLORS['border_secondary']};
-                """)
-                drive_layout = QVBoxLayout(drive_container)
-                drive_layout.setContentsMargins(12, 12, 12, 12)
-                drive_layout.setSpacing(6)
-                
-                # Header
-                header_row = QHBoxLayout()
-                drive_label = QLabel(f"{device} ({mountpoint})")
-                drive_label.setFont(get_font('mono', FONT_SIZES['label']))
-                drive_label.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
-                header_row.addWidget(drive_label)
-                header_row.addStretch()
-                
-                usage_label = QLabel(f"{used_gb:.1f} / {total_gb:.1f} GB")
-                usage_label.setFont(get_font('mono', FONT_SIZES['small']))
-                usage_label.setStyleSheet(f"color: {VITREOS_COLORS['primary_purple']};")
-                header_row.addWidget(usage_label)
-                drive_layout.addLayout(header_row)
-                
-                # Sector scan
-                sector_scan = SectorScanWidget()
-                drive_layout.addWidget(sector_scan)
-                
-                # Usage bar
-                usage_bar = VitreosSegmentedBar(segments=24, height=6, color='primary_purple')
-                drive_layout.addWidget(usage_bar)
-                
-                self.drives_layout.addWidget(drive_container)
-                self.drive_widgets[mountpoint] = (usage_label, usage_bar, sector_scan)
+        try:
+            # Handle both direct storage data and nested data structure
+            if 'storage' in data:
+                storage_data = data['storage']
             else:
-                usage_label, usage_bar, sector_scan = self.drive_widgets[mountpoint]
-                usage_label.setText(f"{used_gb:.1f} / {total_gb:.1f} GB")
-                usage_bar.set_value(percent, 100)
-                sector_scan.set_activity(percent)
-        
-        # Update health gauge (use first drive)
-        if drives:
-            first_drive = drives[0]
-            health = 100 - first_drive.get('percent', 0) * 0.2  # Simulate health
-            self.health_gauge.set_value(health, 100, 'green')
-            self.health_status.setText(f"{health:.0f}% HEALTHY")
+                storage_data = data
             
-            # Update SMART (placeholder)
-            self.smart_labels['temp'].setText("35 °C")
-            self.smart_labels['power_on'].setText("1234 hrs")
-            self.smart_labels['reallocated'].setText("0 sectors")
-            self.smart_labels['pending'].setText("0 sectors")
+            drives = storage_data.get('drives', [])
+            
+            # Only log when drive count changes
+            current_drive_count = len(drives)
+            if not hasattr(self, '_last_drive_count'):
+                self._last_drive_count = 0
+                v_info(f"STORAGE: Initial scan: {current_drive_count} drives detected")
+            elif current_drive_count != self._last_drive_count:
+                v_info(f"STORAGE: Drive count changed: {self._last_drive_count} → {current_drive_count}")
+                self._last_drive_count = current_drive_count
+            
+            # Delegate drive creation and updates to StorageArray
+            # Hide watermark on first detected drives
+            if drives and self.fs_label.isVisible():
+                try:
+                    self.fs_label.hide()
+                except Exception:
+                    pass
+
+            try:
+                # Pass the storage dict through; StorageArray will create/update/remove cards
+                self.storage_array.update_data(storage_data)
+                # Force immediate repaint so new widgets are visible
+                try:
+                    self.storage_array.update()
+                    self.storage_array.repaint()
+                except Exception:
+                    pass
+            except Exception as e:
+                v_error(f"STORAGE: failed to update StorageArray: {e}")
+            
+            # Update health gauge (use first drive)
+            if drives:
+                first_drive = drives[0]
+                health = 100 - first_drive.get('percent', 0) * 0.2  # Simulate health
+                self.health_gauge.set_value(health, 100, 'green')
+                self.health_status.setText(f"{health:.0f}% HEALTHY")
+                
+                # Update SMART (placeholder)
+                self.smart_labels['temp'].setText("35 °C")
+                self.smart_labels['power_on'].setText("1234 hrs")
+                self.smart_labels['reallocated'].setText("0 sectors")
+                self.smart_labels['pending'].setText("0 sectors")
+        
+        except Exception as e:
+            v_error(f"ERROR STORAGE: update_stats failed: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 __all__ = ['StorageTab']

@@ -17,7 +17,7 @@ mod storage;
 use metrics::{MetricsEngine, TelemetrySnapshot};
 
 /// Global polling interval (milliseconds) - adjustable via set_polling_rate()
-static POLLING_INTERVAL_MS: AtomicU64 = AtomicU64::new(16); // Default 60Hz (16ms)
+static POLLING_INTERVAL_MS: AtomicU64 = AtomicU64::new(1000); // Default 1Hz (1000ms)
 
 /// Global snapshot cache - updated by background thread
 static METRICS_SNAPSHOT: Lazy<Arc<RwLock<Option<TelemetrySnapshot>>>> = Lazy::new(|| {
@@ -34,8 +34,8 @@ static PULSE_ENGINE: Lazy<Arc<RwLock<MetricsEngine>>> = Lazy::new(|| {
 
 /// VitreosPulse - High-performance telemetry engine (Pull-Based Architecture)
 /// 
-/// Background thread polls hardware at variable rate (8-100ms).
-/// UI thread pulls latest snapshot via get_latest_metrics() at 60Hz.
+/// Background thread polls hardware at 1Hz (1000ms) for sustainable monitoring.
+/// UI thread pulls latest snapshot via get_latest_metrics() at 1Hz.
 #[pyclass]
 struct VitreosPulse {
     _phantom: (),
@@ -51,7 +51,7 @@ impl VitreosPulse {
     /// Get latest hardware metrics snapshot (non-blocking, <0.1ms)
     /// 
     /// Returns cached snapshot from background polling thread.
-    /// Safe to call at 60Hz from UI thread without blocking.
+    /// Safe to call at 1Hz from UI thread without blocking.
     fn get_latest_metrics(&self, py: Python) -> PyResult<PyObject> {
         let start = Instant::now();
         
@@ -86,7 +86,6 @@ impl VitreosPulse {
             thread::spawn(|| {
                 background_polling_loop();
             });
-            println!("[PULSE] Background polling thread started");
         }
         
         Ok(())
@@ -124,13 +123,7 @@ fn background_polling_loop() {
         
         poll_count += 1;
         
-        // Debug logging every 60 polls
-        if poll_count % 60 == 0 {
-            let interval = POLLING_INTERVAL_MS.load(Ordering::Relaxed);
-            let elapsed = start.elapsed();
-            println!("[PULSE] Poll #{}: {}ms interval, {:.2}ms execution", 
-                     poll_count, interval, elapsed.as_secs_f64() * 1000.0);
-        }
+        // Periodic debug logging intentionally suppressed to avoid console spam
         
         // Sleep for remaining interval
         let interval_ms = POLLING_INTERVAL_MS.load(Ordering::Relaxed);
@@ -142,7 +135,7 @@ fn background_polling_loop() {
         }
     }
     
-    println!("[PULSE] Background polling thread stopped");
+    // Background thread terminated
 }
 
 /// Convert TelemetrySnapshot to Python dict (optimized for <0.1ms)
@@ -183,6 +176,25 @@ fn snapshot_to_pydict(py: Python, metrics: &TelemetrySnapshot) -> PyResult<PyObj
     mem_dict.set_item("usedGB", metrics.memory.used_gb)?;
     mem_dict.set_item("totalGB", metrics.memory.total_gb)?;
     mem_dict.set_item("percent", metrics.memory.percent)?;
+    // Per-slot DIMM telemetry (if available)
+    let slots_list = pyo3::types::PyList::empty(py);
+    for slot in &metrics.memory.slots {
+        let slot_dict = PyDict::new(py);
+        slot_dict.set_item("locator", &slot.locator)?;
+        slot_dict.set_item("capacityGB", slot.capacity_gb)?;
+        slot_dict.set_item("speedMT", slot.speed_mt)?;
+        slot_dict.set_item("configuredClock", slot.configured_clock)?;
+        slot_dict.set_item("manufacturer", &slot.manufacturer)?;
+        slot_dict.set_item("partNumber", &slot.part_number)?;
+        slot_dict.set_item("serial", &slot.serial)?;
+        slot_dict.set_item("populated", slot.populated)?;
+        slots_list.append(slot_dict)?;
+    }
+    mem_dict.set_item("slots", slots_list)?;
+    mem_dict.set_item("effectiveSpeed", metrics.memory.effective_speed_mt)?;
+    mem_dict.set_item("channel", &metrics.memory.channel_mode)?;
+    mem_dict.set_item("headerSpec", &metrics.memory.header_spec)?;
+    mem_dict.set_item("xmpActive", metrics.memory.xmp_active)?;
     dict.set_item("memory", mem_dict)?;
     
     // Network metrics
@@ -204,6 +216,18 @@ fn snapshot_to_pydict(py: Python, metrics: &TelemetrySnapshot) -> PyResult<PyObj
         drive_dict.set_item("usedGB", drive.used_gb)?;
         drive_dict.set_item("totalGB", drive.total_gb)?;
         drive_dict.set_item("percent", drive.percent)?;
+        // Additional telemetry: serial, temp (°C), read/write in MB/s and observed maxima
+        drive_dict.set_item("serial", &drive.serial)?;
+        drive_dict.set_item("temp", drive.temp_c)?;
+        // Convert bytes/sec to MB/s for UI
+        let read_mbps = (drive.read_bps as f64) / (1024.0 * 1024.0);
+        let write_mbps = (drive.write_bps as f64) / (1024.0 * 1024.0);
+        let max_read_mbps = (drive.max_read_bps as f64) / (1024.0 * 1024.0);
+        let max_write_mbps = (drive.max_write_bps as f64) / (1024.0 * 1024.0);
+        drive_dict.set_item("readSpeed", read_mbps)?;
+        drive_dict.set_item("writeSpeed", write_mbps)?;
+        drive_dict.set_item("maxRead", max_read_mbps)?;
+        drive_dict.set_item("maxWrite", max_write_mbps)?;
         drives_list.append(drive_dict)?;
     }
     storage_dict.set_item("drives", drives_list)?;
@@ -215,18 +239,17 @@ fn snapshot_to_pydict(py: Python, metrics: &TelemetrySnapshot) -> PyResult<PyObj
 /// Set polling rate (milliseconds) - adjustable from Python
 /// 
 /// Args:
-///     interval_ms: Polling interval in milliseconds (8-100ms recommended)
+///     interval_ms: Polling interval in milliseconds (100-5000ms recommended)
 /// 
 /// Examples:
-///     8ms  = 125Hz (max performance)
-///     16ms = 60Hz (balanced)
-///     33ms = 30Hz (power saving)
-///     100ms = 10Hz (minimal overhead)
+///     100ms  = 10Hz (high performance)
+///     1000ms = 1Hz (balanced - default)
+///     5000ms = 0.2Hz (minimal overhead)
 #[pyfunction]
-fn set_polling_rate(interval_ms: u64) -> PyResult<()> {
-    let clamped = interval_ms.clamp(8, 1000);
-    POLLING_INTERVAL_MS.store(clamped, Ordering::Relaxed);
-    println!("[PULSE] Polling rate set to {}ms ({}Hz)", clamped, 1000 / clamped);
+fn set_polling_rate(_interval_ms: u64) -> PyResult<()> {
+    // Enforce 1Hz polling rate (1000ms) to ensure stable, low-overhead monitoring
+    let enforced: u64 = 1000;
+    POLLING_INTERVAL_MS.store(enforced, Ordering::Relaxed);
     Ok(())
 }
 

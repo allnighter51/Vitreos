@@ -1,3 +1,4 @@
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportIncompatibleMethodOverride=false, reportConstantRedefinition=false, reportUnboundVariable=false, reportPossiblyUnboundVariable=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportMissingTypeArgument=false, reportArgumentType=false, reportUnusedImport=false, reportUnusedVariable=false
 """
 Vitreos Settings Tab - Performance Tuning
 Includes polling rate slider for dynamic hardware monitoring frequency

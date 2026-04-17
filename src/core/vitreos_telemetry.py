@@ -12,6 +12,7 @@ import socket
 from typing import Dict, Any, Optional, List
 from PyQt6.QtCore import QThread, pyqtSignal
 import psutil
+from src.core.vitreos_logger import v_debug, v_info, v_error
 
 # Optional imports with graceful fallback
 try:
@@ -19,7 +20,7 @@ try:
     NVML_AVAILABLE = True
 except ImportError:
     NVML_AVAILABLE = False
-    print("[TELEMETRY] pynvml not available - GPU monitoring disabled")
+    v_info("pynvml not available - GPU monitoring disabled")
 
 # NOTE: WMI requires 'pip install WMI' for Windows CPU detection
 try:
@@ -28,14 +29,14 @@ try:
 except ImportError:
     wmi = None  # type: ignore
     WMI_AVAILABLE = False
-    print("[TELEMETRY] wmi not available - using fallback CPU detection")
+    v_info("wmi not available - using fallback CPU detection")
 
 try:
     import winreg
     WINREG_AVAILABLE = True
 except ImportError:
     WINREG_AVAILABLE = False
-    print("[TELEMETRY] winreg not available - using basic fallback")
+    v_info("winreg not available - using basic fallback")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -88,7 +89,7 @@ class TelemetryWorker(QThread):
         psutil.cpu_percent(interval=None)
         psutil.cpu_percent(percpu=True)
         
-        print("[TELEMETRY] Worker initialized (waiting for bootstrap)")
+        v_info("Telemetry worker initialized (waiting for bootstrap)")
     
     def apply_bootstrap_data(self, hardware_info: Dict[str, Any]) -> None:
         """Apply hardware info from bootstrap worker"""
@@ -114,7 +115,7 @@ class TelemetryWorker(QThread):
         if self.gateway_ip:
             self.log_message.emit("NET", f"Gateway: {self.gateway_ip} | DNS: {self.dns_target}", "cyan")
         
-        print("[TELEMETRY] Bootstrap data applied - ready for polling")
+        v_info("Telemetry bootstrap data applied - ready for polling")
     
     def run(self) -> None:
         """Main telemetry loop - runs in background thread."""
@@ -133,7 +134,7 @@ class TelemetryWorker(QThread):
                     gpu_temp = data.get('gpu', {}).get('temp', 0)
                     vram_used = data.get('gpu', {}).get('vramUsed', 0)
                     vram_total = data.get('gpu', {}).get('vramTotal', 0)
-                    print(f"[DEBUG] Telemetry Packet: CPU {cpu_load:.0f}% | GPU {gpu_temp:.0f}°C | VRAM {vram_used:.1f}/{vram_total:.1f}GB")
+                    v_debug(f"Telemetry Packet: CPU {cpu_load:.0f}% | GPU {gpu_temp:.0f}°C | VRAM {vram_used:.1f}/{vram_total:.1f}GB")
                 
                 # Emit to main thread
                 self.data_ready.emit(data)
@@ -143,6 +144,7 @@ class TelemetryWorker(QThread):
             
             except Exception as e:
                 self.error_occurred.emit(f"Telemetry error: {e}")
+                v_error(f"Telemetry error: {e}")
                 time.sleep(1.0)
     
     def stop(self) -> None:
@@ -174,7 +176,7 @@ class TelemetryWorker(QThread):
                         cpu_name = self._clean_cpu_name(cpu_name)
                         return cpu_name
                 except Exception as e:
-                    print(f"[TELEMETRY] WMI CPU detection failed: {e}")
+                    v_debug(f"WMI CPU detection failed: {e}")
             
             # Try Windows Registry (no WMI dependency)
             if WINREG_AVAILABLE:
@@ -185,10 +187,10 @@ class TelemetryWorker(QThread):
                     winreg.CloseKey(key)
                     # Clean up the name
                     cpu_name = self._clean_cpu_name(cpu_name)
-                    print(f"[TELEMETRY] CPU detected via Registry: {cpu_name}")
+                    v_info(f"CPU detected via Registry: {cpu_name}")
                     return cpu_name
                 except Exception as e:
-                    print(f"[TELEMETRY] Registry CPU detection failed: {e}")
+                    v_debug(f"Registry CPU detection failed: {e}")
             
             # Fallback to platform.processor()
             cpu_name = platform.processor()
@@ -200,7 +202,7 @@ class TelemetryWorker(QThread):
             # Last resort: generic name
             return f"{platform.machine()} Processor"
         except Exception as e:
-            print(f"[TELEMETRY] CPU discovery error: {e}")
+            v_error(f"CPU discovery error: {e}")
             return "Unknown CPU"
     
     def _clean_cpu_name(self, name: str) -> str:
@@ -255,7 +257,7 @@ class TelemetryWorker(QThread):
             
             return gpu_name
         except Exception as e:
-            print(f"[TELEMETRY] GPU discovery error: {e}")
+            v_debug(f"GPU discovery error: {e}")
             return "Unknown GPU"
     
     def _discover_gpu_vram(self) -> float:
@@ -325,7 +327,7 @@ class TelemetryWorker(QThread):
             
             return None
         except Exception as e:
-            print(f"[TELEMETRY] Primary adapter detection failed: {e}")
+            v_debug(f"Primary adapter detection failed: {e}")
             return None
     
     def _discover_gateway(self) -> Optional[str]:
@@ -347,7 +349,7 @@ class TelemetryWorker(QThread):
             
             return '192.168.1.1'  # Fallback
         except Exception as e:
-            print(f"[TELEMETRY] Gateway discovery failed: {e}")
+            v_debug(f"Gateway discovery failed: {e}")
             return '192.168.1.1'
     
     def _ping_target(self, target: str, timeout: int = 1) -> Optional[float]:
@@ -427,7 +429,7 @@ class TelemetryWorker(QThread):
             
             return interfaces
         except Exception as e:
-            print(f"[TELEMETRY] Interface enumeration failed: {e}")
+            v_debug(f"Interface enumeration failed: {e}")
             return []
     
     def set_active_adapter(self, adapter_name: str) -> None:
@@ -853,7 +855,7 @@ class TelemetryWorker(QThread):
             
             return hogs
         except Exception as e:
-            print(f"[TELEMETRY] Network hogs error: {e}")
+            v_debug(f"Network hogs error: {e}")
             return []
     
     def _get_process_data(self) -> List[Dict[str, Any]]:
@@ -903,7 +905,7 @@ class TelemetryWorker(QThread):
             processes.sort(key=lambda x: x['cpu_percent'], reverse=True)
             return processes[:50]
         except Exception as e:
-            print(f"[TELEMETRY] Process data error: {e}")
+            v_debug(f"Process data error: {e}")
             return []
 
 

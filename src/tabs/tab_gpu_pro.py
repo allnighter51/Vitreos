@@ -4,11 +4,12 @@ GPU Pro Tab - Overclocker's Hub
 """
 
 from typing import Optional, Dict, Any
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor, QPen, QMouseEvent
+from PyQt6.QtGui import QPainter, QColor, QPen, QMouseEvent, QPaintEvent
 
 from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
+from src.core.vitreos_logger import v_debug
 from src.ui.vitreos_widgets import VitreosWinFrame, VitreosBarcode, HazardBadge
 
 
@@ -31,14 +32,14 @@ class NeonSlider(QWidget):
         self.update()
         self.valueChanged.emit(self.value)
     
-    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
+    def mousePressEvent(self, a0: QMouseEvent) -> None:
         if a0 is None:
             return
         self._update_from_mouse(a0.pos().x())
     
-    def mouseMoveEvent(self, event) -> None:
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            self._update_from_mouse(event.pos().x())
+    def mouseMoveEvent(self, a0: QMouseEvent) -> None:
+        if a0.buttons() & Qt.MouseButton.LeftButton:
+            self._update_from_mouse(a0.pos().x())
     
     def _update_from_mouse(self, x: int) -> None:
         width = self.width()
@@ -46,7 +47,7 @@ class NeonSlider(QWidget):
         new_value = int(self.min_val + ratio * (self.max_val - self.min_val))
         self.set_value(new_value)
     
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
@@ -94,7 +95,7 @@ class ThermalDensityBar(QWidget):
         self.temp = temp
         self.update()
     
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, a0: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
@@ -148,11 +149,11 @@ class GPUProTab(QWidget):
         left_layout.setContentsMargins(12, 12, 12, 12)
         left_layout.setSpacing(12)
         
-        # GPU Name
-        gpu_label = QLabel("NVIDIA RTX 3060 // AMPERE")
-        gpu_label.setFont(get_font('mono', FONT_SIZES['title']))
-        gpu_label.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
-        left_layout.addWidget(gpu_label)
+        # GPU Name (populated from telemetry)
+        self.gpu_label = QLabel("DISCOVERING GPU...")
+        self.gpu_label.setFont(get_font('mono', FONT_SIZES['title']))
+        self.gpu_label.setStyleSheet(f"color: {VITREOS_COLORS['text_primary']};")
+        left_layout.addWidget(self.gpu_label)
         
         # Warning badge
         warning = HazardBadge("⚠ OVERCLOCKING VOIDS WARRANTY")
@@ -291,12 +292,32 @@ class GPUProTab(QWidget):
         self.status_label.setText("STATUS: APPLYING...")
         self.status_label.setStyleSheet(f"color: {VITREOS_COLORS['warning_orange']};")
         # Placeholder for NVML apply logic
-        print(f"[GPU PRO] Apply: Power={self.power_slider.value}, Core={self.core_slider.value}, Mem={self.mem_slider.value}")
+        v_debug(f"GPU PRO Apply: Power={self.power_slider.value}, Core={self.core_slider.value}, Mem={self.mem_slider.value}")
     
     def update_stats(self, data: Dict[str, Any]) -> None:
         """Update thermal density map from telemetry."""
         gpu_data = data.get('gpu', {})
         temp = gpu_data.get('temp', 0)
+        # Update GPU label from telemetry name
+        try:
+            gpu_name = gpu_data.get('name', None)
+            if gpu_name:
+                display_name = gpu_name.replace('NVIDIA GeForce ', '').replace('GeForce ', '').upper()
+            else:
+                display_name = 'NO GPU'
+            # Determine architecture shorthand if available
+            if 'RTX 40' in (gpu_name or ''):
+                arch = 'ADA LOVELACE'
+            elif 'RTX 30' in (gpu_name or ''):
+                arch = 'AMPERE'
+            elif 'RTX 20' in (gpu_name or ''):
+                arch = 'TURING'
+            else:
+                arch = ''
+            label_text = f"{display_name} // {arch}" if arch else display_name
+            self.gpu_label.setText(label_text)
+        except Exception:
+            pass
         
         # Update density bars with simulated hotspot temps
         for i, bar in enumerate(self.density_bars):
