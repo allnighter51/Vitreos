@@ -1,27 +1,47 @@
-# Python / Cache
+# --- System / OS ---
+Thumbs.db
+.DS_Store
+*.tmp
+*.bak
+
+# --- Python / Logic ---
 **/__pycache__/
 *.pyc
 .pytest_cache/
-
-# Environments
 venv/
 .env
+*.egg-info/
 
-# Persistent Data (Prevent repo bloat)
+# --- Rust (vitreos_pulse) ---
+# This is the big one—prevents gigabytes of build data
+vitreos_pulse/target/
+**/*.rs.bk
+
+# --- Node.js / Frontend ---
+# Based on your image_1a1c66, you have node_modules present
+node_modules/
+.npm
+.eslintcache
+
+# --- Persistent Data / Logs ---
 data/*.db
 data/*.sqlite3
+*.log
 
-# IDEs & Editor Settings
+# --- IDEs & AI Tools ---
 .vscode/
 .idea/
+.amazonq/
+.leankg/
+config/cline_mcp_settings.json
 
-# OS Generated Files
-Thumbs.db
-.DS_Store
-
-# PyInstaller (For when we compile Vitreos to an .exe)
+# --- Build & Distribution ---
 build/
 dist/
 *.spec
-config/mercury_config.json.bak.20260410210230
-config/cline_mcp_settings.json
+
+# --- Configs with Secrets / Local Paths ---
+# opencode.json often contains absolute local paths (like C:\Users\Veetl...)
+# which shouldn't be in a repo if you ever push to GitHub.
+config/*.json
+opencode.json
