@@ -32,7 +32,9 @@ data/*.sqlite3
 .vscode/
 .idea/
 .amazonq/
+.roo/
 .leankg/
+.rooignore
 config/cline_mcp_settings.json
 
 # --- Build & Distribution ---
