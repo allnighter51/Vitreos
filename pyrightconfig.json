@@ -10,5 +10,11 @@
   "reportIncompatibleMethodOverride": false,
   "reportConstantRedefinition": false,
   "reportUnboundVariable": false,
-  "reportPossiblyUnboundVariable": false
+  "reportPossiblyUnboundVariable": false,
+  "extraPaths": ["."],
+  "executionEnvironments": [
+    {
+      "root": "."
+    }
+  ]
 }

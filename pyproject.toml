@@ -60,3 +60,9 @@ target-version = ['py38', 'py39', 'py310', 'py311']
 
 [tool.pylint.messages_control]
 disable = ["C0111", "C0103"]
+
+[tool.pyright]
+executionEnvironments = [
+  { root = "." }
+]
+extraPaths = ["."]

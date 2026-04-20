@@ -12,7 +12,7 @@ import random
 
 from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font, get_color
 from src.ui.vitreos_widgets import VitreosWinFrame, VitreosCircularGauge, VitreosSegmentedBar
-from src.ui.vitreos_modules import StorageArray
+from src.ui.modules import StorageArray
 from src.core.vitreos_logger import v_debug, v_info, v_error
 
 

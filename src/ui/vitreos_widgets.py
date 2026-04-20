@@ -242,6 +242,39 @@ class VitreosCircularGauge(QWidget):
                                inner_radius * 2, inner_radius * 2)
             painter.setBrush(QBrush(get_color('bg_primary')))
             painter.drawEllipse(inner_rect)
+            
+        # Draw optional text inside the gauge
+        if hasattr(self, 'inner_text') and self.inner_text:
+            painter.setPen(QPen(get_color('text_primary')))
+            
+            font = get_font('mono', FONT_SIZES['value_large'])
+            painter.setFont(font)
+            
+            # Use drawText with centering flag
+            text_rect = QRectF(center_x - inner_radius, center_y - inner_radius, inner_radius * 2, inner_radius * 2)
+            
+            # Split by newlines to support multi-line text
+            lines = self.inner_text.split('\n')
+            
+            if len(lines) == 1:
+                painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, lines[0])
+            elif len(lines) >= 2:
+                # Custom multi-line rendering
+                # Line 1: Large value
+                painter.setFont(get_font('mono', FONT_SIZES['value_large']))
+                painter.setPen(QPen(get_color(self.color_name)))
+                painter.drawText(text_rect.adjusted(0, -15, 0, -15), Qt.AlignmentFlag.AlignCenter, lines[0])
+                
+                # Line 2: Smaller subtitle
+                painter.setFont(get_font('mono', FONT_SIZES['tiny']))
+                painter.setPen(QPen(get_color('text_dim')))
+                painter.drawText(text_rect.adjusted(0, 10, 0, 10), Qt.AlignmentFlag.AlignCenter, lines[1])
+                
+                if len(lines) == 3:
+                    # Line 3: Smallest subtitle
+                    painter.setFont(get_font('mono', FONT_SIZES['micro']))
+                    painter.drawText(text_rect.adjusted(0, 25, 0, 25), Qt.AlignmentFlag.AlignCenter, lines[2])
+
 
 
 class VitreosBarcode(QWidget):

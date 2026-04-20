@@ -19,7 +19,7 @@ from src.ui.vitreos_effects import CRTOverlay, GlitchTransition
 from src.core.vitreos_telemetry_pull import PullBasedTelemetry, PULSE_AVAILABLE
 from src.core.vitreos_presence import PresenceWorker  # type: ignore[import-not-found]
 from src.core.vitreos_bridge import translate_to_legacy_format  # type: ignore[import-not-found]
-from src.ui.vitreos_modules import (
+from src.ui.modules import (
     CpuMonitor, GpuMonitor, ThermalCtrl, StorageArray, MemoryArray, NetInterface
 )
 
@@ -197,11 +197,13 @@ class VitreosMainWindow(QMainWindow):
         - Zone B: Navigation container (flexible) with tab buttons
         """
         top_bar = QWidget()
+        top_bar.setObjectName("TopBar")
         top_bar.setFixedHeight(32)
         top_bar.setStyleSheet(f"""
-            QWidget {{
+            QWidget#TopBar {{
                 background: {VITREOS_COLORS['bg_secondary']};
                 border: none;
+                border-bottom: 1px solid {VITREOS_COLORS['border_primary']};
                 margin: 0px;
                 padding: 0px;
             }}
@@ -213,11 +215,11 @@ class VitreosMainWindow(QMainWindow):
         top_bar_layout.setSpacing(0)  # CRITICAL: No spacing between zones
         
         # ═══════════════════════════════════════════════════════════════════
-        # ZONE A: BRANDING CONTAINER (232px - The Anchor)
+        # ZONE A: BRANDING CONTAINER (310px - The Anchor to match sidebar)
         # ═══════════════════════════════════════════════════════════════════
         branding_container = QFrame()
         branding_container.setObjectName("branding_container")
-        branding_container.setFixedWidth(232)  # CRITICAL: Matches sidebar width
+        branding_container.setFixedWidth(310)  # CRITICAL: Matches sidebar width
         branding_container.setFrameShape(QFrame.Shape.NoFrame)  # Eliminate invisible borders
         branding_container.setLineWidth(0)  # Zero internal frame width
         branding_container.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -238,7 +240,7 @@ class VitreosMainWindow(QMainWindow):
         
         # 1. VITREOS Logo (Left-aligned) - Text-only glow
         logo_label = QLabel("VITREOS")
-        logo_label.setFont(get_font('display', 18))
+        logo_label.setFont(get_font('display', 14)) # Slightly smaller to fit everything
         logo_label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         logo_label.setStyleSheet(f"""
             color: {VITREOS_COLORS['primary_purple']};
@@ -249,21 +251,22 @@ class VitreosMainWindow(QMainWindow):
         apply_phosphor_glow(logo_label, 'primary_purple', blur_radius=8.0)
         branding_layout.addWidget(logo_label)
         
-        # 2. Expanding Spacer (The "Blank Space")
-        branding_layout.addStretch(1)
-        
-        # 3. Sys Pulse Log (Right-aligned, ending at pixel 232) - Text-only glow
-        pulse_log_label = QLabel("● PULSE")
-        pulse_log_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-        pulse_log_label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        pulse_log_label.setStyleSheet(f"""
-            color: {VITREOS_COLORS['green']};
+        # 1.5 Version Label
+        version_label = QLabel("v2.1")
+        version_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        version_label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        version_label.setStyleSheet(f"""
+            color: {VITREOS_COLORS['primary_purple']};
+            opacity: 0.5;
             letter-spacing: 1px;
             background: transparent;
         """)
-        # Apply glow ONLY to the text label, not container
-        apply_phosphor_glow(pulse_log_label, 'green', blur_radius=4.0)
-        branding_layout.addWidget(pulse_log_label)
+        branding_layout.addWidget(version_label)
+        
+        # 2. Expanding Spacer
+        branding_layout.addStretch(1)
+        
+        # We removed the clock and controls from here to place them on the far right
         
         top_bar_layout.addWidget(branding_container)
         
@@ -278,6 +281,7 @@ class VitreosMainWindow(QMainWindow):
             QFrame#nav_container {{
                 background: {VITREOS_COLORS['bg_secondary']};
                 border: none;
+                border-bottom: 1px solid {VITREOS_COLORS['border_primary']};
                 margin: 0px;
                 padding: 0px;
             }}
@@ -300,27 +304,39 @@ class VitreosMainWindow(QMainWindow):
         # Tab configuration with accent colors
         TAB_CONFIG = [
             ('VITALS', 'primary_purple'),
-            ('NETWORK', 'green'),
-            ('PROCESSES', 'cyan'),
-            ('GPU PRO', 'warning_orange'),
-            ('SECURITY', 'critical_red'),
-            ('STORAGE', 'purple_dim'),
-            ('TWEAKS', 'primary_purple'),
-            ('CONSOLE', 'green'),
-            ('REMOTE', 'cyan'),
-            ('SETTINGS', 'text_secondary'),
+            ('NETWORK', 'text_dim'),
+            ('PROCESSES', 'text_dim'),
+            ('GPU PRO', 'text_dim'),
+            ('SOC', 'text_dim'),
+            ('STORAGE', 'text_dim'),
+            ('LOGBOOK', 'text_dim'),
+            ('REMOTE', 'text_dim'),
+            ('CONSOLE', 'text_dim'),
+            ('SETTINGS', 'text_dim'),
         ]
         
         for tab_name, accent_color in TAB_CONFIG:
             btn = QLabel(tab_name)
             btn.setFont(get_font('mono', FONT_SIZES['tiny']))
             btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            btn.setFixedHeight(31)  # 31px to sit flush
-            btn.setMinimumWidth(70)
+            btn.setFixedHeight(32)  # 32px to sit flush
+            btn.setMinimumWidth(85)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             
+            # Use specific colors for active states
+            active_color = 'primary_purple'
+            if tab_name == 'NETWORK': active_color = 'green'
+            elif tab_name == 'PROCESSES': active_color = 'cyan'
+            elif tab_name == 'GPU PRO': active_color = 'warning_orange'
+            elif tab_name == 'SOC': active_color = 'warning_orange'
+            elif tab_name == 'STORAGE': active_color = 'purple_dim'
+            elif tab_name == 'LOGBOOK': active_color = 'text_primary'
+            elif tab_name == 'REMOTE': active_color = 'cyan'
+            elif tab_name == 'CONSOLE': active_color = 'green'
+            elif tab_name == 'SETTINGS': active_color = 'text_primary'
+            
             # Store accent color as property
-            btn.setProperty('accent_color', accent_color)
+            btn.setProperty('accent_color', active_color)
             
             def make_handler(name: str):
                 def handler(a0: QMouseEvent) -> None:
@@ -335,24 +351,26 @@ class VitreosMainWindow(QMainWindow):
         
         nav_layout.addStretch()
         
-        # Right: System tray compartment
+        # ═══════════════════════════════════════════════════════════════════
+        # RIGHT TRAY (Clock & Window Controls)
+        # ═══════════════════════════════════════════════════════════════════
         tray_widget = QWidget()
+        tray_widget.setObjectName("tray_widget")
         tray_widget.setStyleSheet(f"""
-            background: {VITREOS_COLORS['bg_secondary']};
-            border-left: 1px solid {VITREOS_COLORS['border_primary']};
+            QWidget#tray_widget {{
+                background: {VITREOS_COLORS['bg_secondary']};
+                border: none;
+                border-bottom: 1px solid {VITREOS_COLORS['border_primary']};
+            }}
         """)
         tray_layout = QHBoxLayout(tray_widget)
-        tray_layout.setContentsMargins(12, 0, 12, 0)
+        tray_layout.setContentsMargins(16, 0, 8, 0)
         tray_layout.setSpacing(8)
         
-        # Micro-clock
         self.clock_label = QLabel()
-        self.clock_label.setFont(get_font('mono', FONT_SIZES['tiny']))
-        self.clock_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
+        self.clock_label.setFont(get_font('mono', FONT_SIZES['micro']))
+        self.clock_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']}; background: transparent;")
         tray_layout.addWidget(self.clock_label)
-        # Apply phosphor glow and monospaced styling to clock label
-        self.clock_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']}; background: transparent; letter-spacing: 1px;")
-        apply_phosphor_glow(self.clock_label, 'primary_purple', blur_radius=6.0)
         
         # Start clock timer
         self.clock_timer = QTimer(self)
@@ -360,71 +378,60 @@ class VitreosMainWindow(QMainWindow):
         self.clock_timer.start(1000)
         self._update_clock()
         
-        # Debug toggle
-        self.debug_btn = QPushButton("◉")
-        self.debug_btn.setFixedSize(16, 16)
-        self.debug_btn.setFont(get_font('mono', 8))
-        self.debug_btn.setCheckable(True)
-        self.debug_btn.setStyleSheet(f"""
-            QPushButton {{
+        # Window Controls Container (darker box)
+        controls_container = QFrame()
+        controls_container.setObjectName("window_controls")
+        controls_container.setStyleSheet(f"""
+            QFrame#window_controls {{
                 background: {VITREOS_COLORS['bg_card']};
-                border: 1px solid {VITREOS_COLORS['border_primary']};
-                color: {VITREOS_COLORS['text_dim']};
-            }}
-            QPushButton:checked {{
-                background: {VITREOS_COLORS['warning_orange']};
-                border: 1px solid {VITREOS_COLORS['warning_orange']};
-                color: {VITREOS_COLORS['text_primary']};
-            }}
-            QPushButton:hover {{
-                background: {VITREOS_COLORS['border_primary']};
-                color: {VITREOS_COLORS['warning_orange']};
-                border: 1px solid {VITREOS_COLORS['warning_orange']};
+                border: 1px solid {VITREOS_COLORS['border_dim']};
+                border-radius: 2px;
             }}
         """)
-        self.debug_btn.clicked.connect(self._on_debug_toggled)
-        tray_layout.addWidget(self.debug_btn)
+        controls_layout = QHBoxLayout(controls_container)
+        controls_layout.setContentsMargins(4, 0, 4, 0)
+        controls_layout.setSpacing(2)
         
-        # Window controls — Visible Minimize and Close buttons (far top-right)
-        min_btn = QPushButton("-")
-        min_btn.setFixedSize(20, 18)
-        min_btn.setFont(get_font('mono', FONT_SIZES['micro']))
+        min_btn = QPushButton("─")
+        min_btn.setObjectName("min_btn")
+        min_btn.setFixedSize(20, 20)
+        min_btn.setFont(get_font('mono', 9))
         min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         min_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {VITREOS_COLORS['text_dim']};
-                border: none;
-            }}
-            QPushButton:hover {{
-                color: {VITREOS_COLORS['primary_purple']};
-                background: rgba(168,85,247,0.04);
-            }}
+            QPushButton#min_btn {{ background: transparent; color: {VITREOS_COLORS['text_secondary']}; border: none; padding: 0px; }}
+            QPushButton#min_btn:hover {{ color: {VITREOS_COLORS['text_primary']}; }}
         """)
         min_btn.clicked.connect(self._on_minimize)
-        tray_layout.addWidget(min_btn)
-
-        close_btn = QPushButton("×")
-        close_btn.setFixedSize(20, 18)
-        close_btn.setFont(get_font('mono', FONT_SIZES['micro']))
+        controls_layout.addWidget(min_btn)
+        
+        max_btn = QPushButton("□")
+        max_btn.setObjectName("max_btn")
+        max_btn.setFixedSize(20, 20)
+        max_btn.setFont(get_font('mono', 10))
+        max_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        max_btn.setStyleSheet(f"""
+            QPushButton#max_btn {{ background: transparent; color: {VITREOS_COLORS['text_secondary']}; border: none; padding: 0px; }}
+            QPushButton#max_btn:hover {{ color: {VITREOS_COLORS['text_primary']}; }}
+        """)
+        max_btn.clicked.connect(self._on_maximize)
+        controls_layout.addWidget(max_btn)
+        
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("close_btn")
+        close_btn.setFixedSize(20, 20)
+        close_btn.setFont(get_font('mono', 10))
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {VITREOS_COLORS['text_dim']};
-                border: none;
-            }}
-            QPushButton:hover {{
-                color: {VITREOS_COLORS['critical_red']};
-                background: rgba(255,68,68,0.04);
-            }}
+            QPushButton#close_btn {{ background: transparent; color: {VITREOS_COLORS['critical_red']}; border: none; padding: 0px; }}
+            QPushButton#close_btn:hover {{ background: {VITREOS_COLORS['critical_red']}; color: {VITREOS_COLORS['bg_card']}; border-radius: 2px; }}
         """)
         close_btn.clicked.connect(self._on_close)
-        tray_layout.addWidget(close_btn)
+        controls_layout.addWidget(close_btn)
         
-        nav_layout.addWidget(tray_widget)
+        tray_layout.addWidget(controls_container)
         
         top_bar_layout.addWidget(nav_container, 1)
+        top_bar_layout.addWidget(tray_widget)
         # Make top bar draggable for frameless window behaviour
         top_bar.setCursor(Qt.CursorShape.SizeAllCursor)
         # Use `a0` parameter name to match PyQt6 stubs and satisfy Pylance
@@ -439,12 +446,16 @@ class VitreosMainWindow(QMainWindow):
         from datetime import datetime
         now = datetime.now()
         time_str = now.strftime("%H:%M:%S")
-        day_abbrev = now.strftime("%a")
-        # Format: CLOCK_ HH:MM:SS (Day)
-        self.clock_label.setText(f"CLOCK_ {time_str} ({day_abbrev})")
+        self.clock_label.setText(f"{time_str}")
     
     def _on_minimize(self) -> None:
         self.showMinimized()
+        
+    def _on_maximize(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
     
     def _on_close(self) -> None:
         self.close()
@@ -502,43 +513,41 @@ class VitreosMainWindow(QMainWindow):
             self._on_tab_changed(tab_name)
     
     def _update_tab_style(self, tab_name: str) -> None:
-        """Update tab with dynamic reactive HUD accents (3-sided box)."""
+        """Update tab with clean minimalist design matching image."""
         btn = self.tab_buttons[tab_name]
         is_active = (tab_name == self.active_tab)
         accent_color = btn.property('accent_color')
         
         if is_active:
-            # Active: 3-sided box with dynamic accent color + 2px neon underline
+            # Active: Highlighted text, subtle background, bottom accent border
             btn.setStyleSheet(f"""
                 QLabel {{
                     color: {VITREOS_COLORS[accent_color]};
-                    background: {VITREOS_COLORS['bg_secondary']};
-                    border-top: 1px solid {VITREOS_COLORS[accent_color]};
-                    border-left: 1px solid {VITREOS_COLORS[accent_color]};
-                    border-right: 1px solid {VITREOS_COLORS[accent_color]};
+                    background: rgba(255, 255, 255, 0.03);
+                    border-top: none;
+                    border-left: none;
+                    border-right: 1px solid {VITREOS_COLORS['border_dim']};
                     border-bottom: 2px solid {VITREOS_COLORS[accent_color]};
-                    padding: 6px 8px 0px 8px;
+                    padding: 0px 10px;
                     letter-spacing: 1px;
                 }}
             """)
         else:
-            # Inactive: 3-sided box with dimmed borders
+            # Inactive: Dim text, transparent background, right separator
             btn.setStyleSheet(f"""
                 QLabel {{
-                    color: {VITREOS_COLORS['text_darker']};
-                    background: {VITREOS_COLORS['bg_secondary']};
-                    border-top: 1px solid {VITREOS_COLORS['border_dim']};
-                    border-left: 1px solid {VITREOS_COLORS['border_dim']};
+                    color: {VITREOS_COLORS['text_dim']};
+                    background: transparent;
+                    border-top: none;
+                    border-left: none;
                     border-right: 1px solid {VITREOS_COLORS['border_dim']};
-                    border-bottom: none;
-                    padding: 6px 8px 2px 8px;
+                    border-bottom: 1px solid {VITREOS_COLORS['border_primary']};
+                    padding: 0px 10px;
                     letter-spacing: 1px;
                 }}
                 QLabel:hover {{
                     color: {VITREOS_COLORS['text_secondary']};
-                    border-top: 1px solid {VITREOS_COLORS['border_primary']};
-                    border-left: 1px solid {VITREOS_COLORS['border_primary']};
-                    border-right: 1px solid {VITREOS_COLORS['border_primary']};
+                    background: rgba(255, 255, 255, 0.01);
                 }}
             """)
     
@@ -694,6 +703,7 @@ class VitreosMainWindow(QMainWindow):
         Args:
             data: Hardware telemetry dictionary from TelemetryWorker
         """
+        import traceback as _traceback
         try:
             # Verbose Mode: Log telemetry poll (amber)
             if self.verbose_mode and hasattr(self, '_update_counter'):
@@ -714,9 +724,14 @@ class VitreosMainWindow(QMainWindow):
             
             # Extract current metrics
             cpu_load = data.get('cpu', {}).get('totalLoad', 0)
-            gpu_load = data.get('gpu', {}).get('usage', 0)
+            
+            # GPU data is now a list; take the first one for primary metrics
+            gpu_data_list = data.get('gpu', [])
+            primary_gpu = gpu_data_list[0] if isinstance(gpu_data_list, list) and len(gpu_data_list) > 0 else {}
+            gpu_load = primary_gpu.get('usage', 0)
+            
             cpu_temp = data.get('cpu', {}).get('temp', 0)
-            gpu_temp = data.get('gpu', {}).get('temp', 0)
+            gpu_temp = primary_gpu.get('temp', 0)
             download_mbps = data.get('network', {}).get('downloadMbps', 0)
             
             # TACTICAL FILTER: Only log significant events to sidebar
@@ -748,32 +763,56 @@ class VitreosMainWindow(QMainWindow):
                 self._network_peak = download_mbps
                 self.sidebar.append_log("NET", f"New peak: {download_mbps:.1f} Mbps", "green")
             
-            # Update V3 modules
+            # Update V3 modules — each isolated so one crash cannot block others
             if 'cpu' in data:
-                self.cpu_module.update_data(data['cpu'])
+                try:
+                    self.cpu_module.update_data(data['cpu'])
+                except Exception as _me:
+                    print(f"[VITREOS][ERR] cpu_module.update_data: {_me}")
+                    _traceback.print_exc()
             
             if 'gpu' in data:
-                self.gpu_module.update_data(data['gpu'])
+                try:
+                    self.gpu_module.update_data(data['gpu'])
+                except Exception as _me:
+                    print(f"[VITREOS][ERR] gpu_module.update_data: {_me}")
+                    _traceback.print_exc()
             
             # Update presence worker if enabled
             if self.presence_worker and self.presence_enabled:
                 self.presence_worker.update_hardware_stats(data)
             
-            # Thermal module needs CPU and GPU temps from their respective sources
+            # Thermal module: pull temps from cpu/gpu sub-dicts
             thermal_data = {
                 'cpuTemp': data.get('cpu', {}).get('temp', 0),
-                'gpuTemp': data.get('gpu', {}).get('temp', 0),
+                'gpuTemp': primary_gpu.get('temp', 0),
             }
-            self.thermal_module.update_data(thermal_data)
+            try:
+                self.thermal_module.update_data(thermal_data)
+            except Exception as _me:
+                print(f"[VITREOS][ERR] thermal_module.update_data: {_me}")
+                _traceback.print_exc()
             
             if 'storage' in data:
-                self.storage_module.update_data(data['storage'])
+                try:
+                    self.storage_module.update_data(data['storage'])
+                except Exception as _me:
+                    print(f"[VITREOS][ERR] storage_module.update_data: {_me}")
+                    _traceback.print_exc()
             
             if 'memory' in data:
-                self.memory_module.update_data(data['memory'])
+                try:
+                    self.memory_module.update_data(data['memory'])
+                except Exception as _me:
+                    print(f"[VITREOS][ERR] memory_module.update_data: {_me}")
+                    _traceback.print_exc()
             
             if 'network' in data:
-                self.network_module.update_data(data['network'])
+                try:
+                    self.network_module.update_data(data['network'])
+                except Exception as _me:
+                    print(f"[VITREOS][ERR] network_module.update_data: {_me}")
+                    _traceback.print_exc()
             
             # Task 2: Background Signal Routing - Update ALL cached tabs, not just active one
             if TABS_AVAILABLE and self.tab_cache:
@@ -797,7 +836,9 @@ class VitreosMainWindow(QMainWindow):
                         pass
         
         except Exception as e:
-            pass
+            import traceback as _tb2
+            print(f"[VITREOS][ERR] _update_modules outer exception: {e}")
+            _tb2.print_exc()
     
     def _handle_log(self, level: str, message: str, color: str) -> None:
         """

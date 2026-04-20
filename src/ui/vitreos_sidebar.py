@@ -262,11 +262,7 @@ class VitreosSidebar(QWidget):
             }}
         """)
         
-        # Tactical Notch: 3x3px square at Master Intersection (top-right corner)
-        self.notch = QLabel(self)
-        self.notch.setFixedSize(3, 3)
-        self.notch.setStyleSheet(f"background: {VITREOS_COLORS['primary_purple']}; border: none;")
-        self.notch.move(self.width() - 3, 0)  # Flush at top-right corner
+        # NOTE: Tactical Notch removed — it appeared as a stray purple square in the UI
     
     def _create_glowing_logo(self) -> QWidget:
         """Create phosphor glow logo with metadata and status LEDs."""

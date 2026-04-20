@@ -9,9 +9,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-from src.core.vitreos_silent import initialize_silent_terminal
-initialize_silent_terminal()
-
+# Silent terminal removed - using standard logger
 from src.main import main
 
 if __name__ == "__main__":
