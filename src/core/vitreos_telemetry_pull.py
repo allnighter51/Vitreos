@@ -238,36 +238,88 @@ class TelemetryWorkerThread(QThread):
 
     def _poll_memory(self, wmi_client) -> Dict[str, Any]:
         mem = psutil.virtual_memory()
-        
-        slots = []
-        speed = 0
+
+        slots: list = []
+        total_slots: int = 0
+        speed: int = 0
+
         try:
             if wmi_client:
-                for mem_stick in wmi_client.Win32_PhysicalMemory():
-                    slots.append({
-                        'locator': mem_stick.DeviceLocator,
-                        'capacityGB': int(mem_stick.Capacity) / (1024**3)
-                    })
-                    if not speed and mem_stick.ConfiguredClockSpeed:
-                        speed = int(mem_stick.ConfiguredClockSpeed)
-        except: pass
-        
+                # ── 1. Board-level: total physical slot count ──────────────
+                try:
+                    for arr in wmi_client.Win32_PhysicalMemoryArray():
+                        md = getattr(arr, 'MemoryDevices', None)
+                        if md:
+                            total_slots = int(md)
+                            break
+                except Exception:
+                    pass
+
+                # ── 2. Populated sticks ────────────────────────────────────
+                try:
+                    for stick in wmi_client.Win32_PhysicalMemory():
+                        cap_bytes: int = 0
+                        try:
+                            cap_bytes = int(stick.Capacity or 0)
+                        except Exception:
+                            pass
+
+                        clk: int = 0
+                        try:
+                            clk = int(stick.ConfiguredClockSpeed or stick.Speed or 0)
+                        except Exception:
+                            pass
+
+                        slots.append({
+                            # Raw DeviceLocator — displayed as-is in the UI
+                            'locator':      str(stick.DeviceLocator or f'SLOT{len(slots)}').strip(),
+                            'bankLabel':    str(stick.BankLabel    or '').strip(),
+                            'capacityGB':   cap_bytes / (1024 ** 3),
+                            'speed':        clk,
+                            'manufacturer': str(stick.Manufacturer or '').strip(),
+                            'partNumber':   str(stick.PartNumber   or '').strip(),
+                        })
+                        if not speed and clk:
+                            speed = clk
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # ── 3. Fallback when WMI is unavailable ───────────────────────────
         if not slots:
-            slots = [
-                {'locator': 'DIMM_A1', 'capacityGB': mem.total / (1024**3) / 2},
-                {'locator': 'DIMM_B1', 'capacityGB': mem.total / (1024**3) / 2}
-            ]
+            total_gb = mem.total / (1024 ** 3)
+            if total_gb <= 8:
+                loc_list = ['DIMM_A1']
+            elif total_gb <= 16:
+                loc_list = ['DIMM_A1', 'DIMM_B1']
+            else:
+                loc_list = ['DIMM_A1', 'DIMM_A2', 'DIMM_B1', 'DIMM_B2']
+            per = total_gb / len(loc_list)
+            slots = [{'locator': l, 'bankLabel': '', 'capacityGB': per,
+                      'speed': 3200, 'manufacturer': '', 'partNumber': ''}
+                     for l in loc_list]
             speed = 3200
-            
+
+        # If WMI didn't give us a board slot count, infer it
+        if total_slots <= 0:
+            total_slots = max(len(slots), 2)
+            if total_slots > 2:
+                total_slots = 4
+
+        # Effective speed: double the configured clock (DDR)
+        effective_speed = speed * 2 if speed else 0
+
         return {
-            'totalGB': mem.total / (1024**3),
-            'usedGB': mem.used / (1024**3),
-            'availableGB': mem.available / (1024**3),
-            'cachedGB': getattr(mem, 'cached', 0) / (1024**3) if hasattr(mem, 'cached') else 0,
-            'percent': mem.percent,
-            'slots': slots,
-            'effectiveSpeed': speed,
-            'channel': 'Dual' if len(slots) > 1 else 'Single'
+            'totalGB':       mem.total    / (1024 ** 3),
+            'usedGB':        mem.used     / (1024 ** 3),
+            'availableGB':   mem.available / (1024 ** 3),
+            'cachedGB':      (getattr(mem, 'cached', 0) or 0) / (1024 ** 3),
+            'percent':       mem.percent,
+            'slots':         slots,
+            'totalSlots':    total_slots,
+            'effectiveSpeed': effective_speed or speed,
+            'channel':       'Dual' if len(slots) > 1 else 'Single',
         }
 
     def _poll_storage(self) -> Dict[str, Any]:
@@ -427,9 +479,15 @@ class PullBasedTelemetry(QObject):
     
     def _check_significant_events(self, data: Dict[str, Any]) -> None:
         cpu_load = data.get('cpu', {}).get('totalLoad', 0)
-        gpu_load = data.get('gpu', {}).get('usage', 0)
+        
+        # Handle GPU as list
+        gpu_data_source = data.get('gpu', [])
+        gpu_data = gpu_data_source[0] if isinstance(gpu_data_source, list) and gpu_data_source else (gpu_data_source if isinstance(gpu_data_source, dict) else {})
+        
+        gpu_load = gpu_data.get('usage', 0)
         cpu_temp = data.get('cpu', {}).get('temp', 0)
-        gpu_temp = data.get('gpu', {}).get('temp', 0)
+        gpu_temp = gpu_data.get('temp', 0)
+
         download_mbps = data.get('network', {}).get('downloadMbps', 0)
         
         if abs(cpu_load - self._last_cpu_load) > 25:

@@ -27,7 +27,7 @@ from src.ui.modules import (
 try:
     from src.tabs import (  # type: ignore[import-not-found]
         NetworkTab, ProcessesTab, GPUProTab, SecurityTab,
-        StorageTab, TweaksTab, ConsoleTab, RemoteTab, SettingsTab
+        StorageTab, TweaksTab, ConsoleTab, RemoteTab, SettingsTab, SOCTab
     )
     TABS_AVAILABLE = True
 except ImportError as e:
@@ -952,6 +952,15 @@ class VitreosMainWindow(QMainWindow):
                     self.active_tab_widget.show()
             except Exception:
                 self.network_module.show()
+        
+        elif tab_name == 'SOC' and TABS_AVAILABLE:
+            try:
+                self.active_tab_widget = SOCTab()
+                self.dashboard_grid.addWidget(self.active_tab_widget, 0, 0, 2, 3)
+                if self.active_tab_widget:
+                    self.active_tab_widget.show()
+            except Exception:
+                pass
         
         elif tab_name == 'GPU PRO' and TABS_AVAILABLE:
             try:

@@ -89,11 +89,7 @@ class NetworkTab(QWidget):
                 border-top: 4px solid {VITREOS_COLORS['cyan']};
             }}
         """)
-        self.adapter_combo.currentTextChanged.connect(self._on_adapter_changed)
         layout.addWidget(self.adapter_combo)
-        
-        # Populate adapters
-        self._populate_adapters()
         
         # Live status labels
         self.ip_label = QLabel("IP: --")
@@ -110,6 +106,11 @@ class NetworkTab(QWidget):
         self.type_label.setFont(get_font('mono', 8))
         self.type_label.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
         layout.addWidget(self.type_label)
+
+        # Connect signals and populate AFTER labels exist
+        self.adapter_combo.currentTextChanged.connect(self._on_adapter_changed)
+        self._populate_adapters()
+
         
         layout.addStretch()
         

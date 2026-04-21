@@ -23,7 +23,10 @@ def translate_to_legacy_format(v3_data: Dict[str, Any]) -> Dict[str, Any]:
         Flat dictionary with legacy key names
     """
     cpu = v3_data.get('cpu', {})
-    gpu = v3_data.get('gpu', {})
+    gpu_data = v3_data.get('gpu', [])
+    # Handle list from newer telemetry or dict from legacy
+    gpu = gpu_data[0] if isinstance(gpu_data, list) and gpu_data else (gpu_data if isinstance(gpu_data, dict) else {})
+
     memory = v3_data.get('memory', {})
     network = v3_data.get('network', {})
     storage = v3_data.get('storage', {})

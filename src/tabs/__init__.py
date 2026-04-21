@@ -13,6 +13,7 @@ from .tab_tweaks import TweaksTab
 from .tab_console import ConsoleTab
 from .tab_remote import RemoteTab
 from .tab_settings import SettingsTab
+from .tab_soc import SOCTab
 
 __all__ = [
     'VitalsTab',
@@ -24,7 +25,8 @@ __all__ = [
     'TweaksTab',
     'ConsoleTab',
     'RemoteTab',
-    'SettingsTab'
+    'SettingsTab',
+    'SOCTab'
 ]
 
 
