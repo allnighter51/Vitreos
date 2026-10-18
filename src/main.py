@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QGridLayout, QVBoxLayout, QLabel, QSizeGrip, QFrame, QPushButton
 )
 from PyQt6.QtCore import Qt, QPoint, QTimer, QEvent
-from PyQt6.QtGui import QMouseEvent, QResizeEvent, QKeyEvent, QCloseEvent
+from PyQt6.QtGui import QMouseEvent, QResizeEvent, QKeyEvent, QCloseEvent, QIcon
 
 from src.ui.vitreos_theme import VITREOS_COLORS, VITREOS_STYLESHEET, initialize_theme, get_font, FONT_SIZES
 from src.ui.vitreos_widgets import apply_phosphor_glow
@@ -79,10 +79,19 @@ class VitreosMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         
+        # Auto-initialize runtime directories (data/ and config/) next to executable
+        from src.core.paths import ensure_app_dirs, get_bundle_dir
+        ensure_app_dirs()
+
         # Window properties
         self.setWindowTitle("VITREOS // SYSTEM SENTINEL v2.1")
         self.setGeometry(100, 100, 1400, 900)
         self.setMinimumSize(1200, 800)
+        
+        # Window icon from bundled assets
+        icon_path = get_bundle_dir() / "assets" / "logo.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
         
         # Frameless window (SOLID STATE - No transparency)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
@@ -486,7 +495,8 @@ class VitreosMainWindow(QMainWindow):
     
     # Consolidated debug toggle handler (accepts optional bool from clicked signal)
     def _on_debug_toggled(self, enabled: bool = False) -> None:
-        is_checked = self.debug_btn.isChecked() if not enabled else bool(enabled)
+        debug_btn = getattr(self, 'debug_btn', None)
+        is_checked = debug_btn.isChecked() if debug_btn is not None else bool(enabled)
         self.verbose_mode = is_checked
         self._save_verbose_mode()
 

@@ -36,12 +36,17 @@ mercury_config.json
 .roo/
 .leankg/
 .rooignore
+.claude/
+.cline/
 config/cline_mcp_settings.json
+_archive/
+archive/
 
 # --- Build & Distribution ---
 build/
 dist/
 *.spec
+!Vitreos.spec
 
 # --- Configs with Secrets / Local Paths ---
 # opencode.json often contains absolute local paths (like C:\Users\Veetl...)

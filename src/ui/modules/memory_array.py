@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from PyQt6.QtWidgets import QWidget, QGridLayout, QFrame, QHBoxLayout, QVBoxLayout
 from PyQt6.QtCore import Qt
 from ..vitreos_theme import VITREOS_COLORS
@@ -157,7 +157,38 @@ class DimmArray(QWidget):
         # Build a default 4-slot placeholder on first show
         self._rebuild(4, [])
 
-    # ── internal helpers ────────────────────────────────────────────────────
+    def _resolve_slot_mapping(self, total_slots: int, populated: List[Dict[str, Any]]) -> Tuple[List[str], List[Dict[str, Any]]]:
+        """
+        Map populated DIMM sticks and empty slots without dropping duplicate locators.
+        Supports standard dual-channel 4-slot boards (A1, A2, B1, B2) cleanly.
+        """
+        short_map: Dict[str, Dict[str, Any]] = {}
+        for s in populated:
+            loc = str(s.get('locator') or '').strip()
+            short_loc = _short_locator(loc)
+            short_map[short_loc] = s
+
+        # If standard 4-slot board and sticks report channel notation (e.g. A1, B1)
+        if total_slots == 4 and any(k in ('A1', 'A2', 'B1', 'B2') for k in short_map):
+            all_labels = ['A1', 'A2', 'B1', 'B2']
+            slot_data = [short_map.get(lbl, {}) for lbl in all_labels]
+            return all_labels, slot_data
+
+        # Sequential mapping fallback
+        all_labels: List[str] = []
+        slot_data: List[Dict[str, Any]] = []
+        for i, s in enumerate(populated):
+            loc = str(s.get('locator') or '').strip()
+            lbl = _short_locator(loc) if loc else f'DIMM {i+1}'
+            all_labels.append(lbl)
+            slot_data.append(s)
+
+        for i in range(len(populated), total_slots):
+            all_labels.append(f'SLOT {i + 1}')
+            slot_data.append({})
+
+        return all_labels, slot_data
+
     def _rebuild(self, total_slots: int, populated: List[Dict[str, Any]]) -> None:
         """Recreate slot widgets to match total_slots, populated with real data."""
         # Clear existing
@@ -167,38 +198,12 @@ class DimmArray(QWidget):
             w.deleteLater()
         self._slot_widgets.clear()
 
-        # Build a locator → info map from populated sticks
-        pop_map: Dict[str, Dict[str, Any]] = {}
-        for s in populated:
-            loc = str(s.get('locator') or '').strip()
-            if loc:
-                pop_map[loc] = s
-
-        # Sort populated locators so their order is stable
-        pop_locators = sorted(pop_map.keys())
-
-        # Determine all slot labels:
-        # - Populated slots: use their real WMI locator (shortened for display)
-        # - Empty slots: placeholder labels SLOT N
-        #
-        # If total_slots matches exactly the populated count, every slot is filled.
-        # If total_slots > populated count, we add empty placeholders at the end.
-        all_labels: List[str] = []
-        for loc in pop_locators:
-            all_labels.append(_short_locator(loc))
-
-        for i in range(len(pop_locators), total_slots):
-            all_labels.append(f'SLOT {i + 1}')
+        all_labels, slot_data = self._resolve_slot_mapping(total_slots, populated)
 
         # Create widgets
-        for i, label in enumerate(all_labels):
+        for label, data in zip(all_labels, slot_data):
             w = DimmSlotWidget(label)
-            # Try to match a populated slot to this position
-            if i < len(pop_locators):
-                real_loc = pop_locators[i]
-                w.set_slot(pop_map[real_loc])
-            else:
-                w.set_slot({})
+            w.set_slot(data)
             self._slot_widgets.append(w)
             self._sticks_layout.addWidget(w)
 
@@ -228,23 +233,13 @@ class DimmArray(QWidget):
                 total_slots = 4  # most common dual-channel configs are 2 or 4
 
         # Only rebuild widgets when slot count changes (avoid flicker)
-        if total_slots != self._current_total:
+        if total_slots != self._current_total or len(self._slot_widgets) != total_slots:
             self._rebuild(total_slots, populated)
         else:
-            # Just refresh data in existing widgets
-            pop_map: Dict[str, Dict[str, Any]] = {}
-            for s in populated:
-                loc = str(s.get('locator') or '').strip()
-                if loc:
-                    pop_map[loc] = s
-            pop_locators = sorted(pop_map.keys())
-
-            for i, w in enumerate(self._slot_widgets):
-                if i < len(pop_locators):
-                    w.set_slot(pop_map[pop_locators[i]])
-                    w.update_label(_short_locator(pop_locators[i]))
-                else:
-                    w.set_slot({})
+            all_labels, slot_data = self._resolve_slot_mapping(total_slots, populated)
+            for w, label, data in zip(self._slot_widgets, all_labels, slot_data):
+                w.set_slot(data)
+                w.update_label(label)
 
     def set_effective_speed(self, speed_mt: int) -> None:
         self.lbl_eff.setText(f"{speed_mt} MT/s" if speed_mt else '-- MT/s')

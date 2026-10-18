@@ -1,11 +1,11 @@
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnusedVariable=false
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnusedVariable=false, reportOptionalMemberAccess=false
 """
 Vitreos Monitoring Modules - Dashboard Widgets
 Individual monitoring components for the 2x3 grid layout
 """
 
 from typing import Optional, List, Dict, Any
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QFrame
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QFrame, QScrollArea
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPaintEvent
 
@@ -50,6 +50,7 @@ class DriveCardWidget(QWidget):
                 border-left: 2px solid #A855F7;
             }
         """)
+        self.setMinimumHeight(96)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 6, 8, 6)
@@ -75,8 +76,13 @@ class DriveCardWidget(QWidget):
         row1.addWidget(model_label)
         row1.addStretch()
 
-        temp_color = '#FF6B00' if temp > 45 else '#A855F7'
-        self.temp_label = QLabel(f'{temp}°C')
+        if temp is None or temp <= 0:
+            temp_text = '--°C'
+            temp_color = VITREOS_COLORS['text_dim']
+        else:
+            temp_text = f'{temp}°C'
+            temp_color = '#FF6B00' if temp > 45 else '#A855F7'
+        self.temp_label = QLabel(temp_text)
         self.temp_label.setFont(get_font('mono', FONT_SIZES['small']))
         self.temp_label.setStyleSheet(f'color: {temp_color};')
         row1.addWidget(self.temp_label)
@@ -260,14 +266,31 @@ class StorageArray(VitreosWinFrame):
         header.addWidget(write_badge)
         outer.addLayout(header)
 
-        # ── Drive cards ───────────────────────────────────────────────────
-        self.drives_layout = QVBoxLayout()
-        self.drives_layout.setSpacing(8)
-        outer.addLayout(self.drives_layout)
+        # ── Drive cards scroll area ───────────────────────────────────────
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollBar:vertical {{ 
+                width: 4px; 
+                background: {VITREOS_COLORS['bg_primary']}; 
+                border-radius: 2px;
+            }}
+            QScrollBar::handle:vertical {{ 
+                background: {VITREOS_COLORS['primary_purple']}; 
+                border-radius: 2px;
+            }}
+        """)
 
-        # Drives populated dynamically from telemetry
+        drives_container = QWidget()
+        drives_container.setStyleSheet("background: transparent;")
+        self.drives_layout = QVBoxLayout(drives_container)
+        self.drives_layout.setContentsMargins(0, 0, 4, 0)
+        self.drives_layout.setSpacing(6)
+        self.drives_layout.addStretch()
+        self.scroll_area.setWidget(drives_container)
 
-        outer.addStretch()
+        outer.addWidget(self.scroll_area, 1)
 
         # ── Footer: RAID status ───────────────────────────────────────────
         footer = QWidget()
@@ -381,7 +404,7 @@ class StorageArray(VitreosWinFrame):
                     card = DriveCardWidget(drive_type, model, serial, temp, used_gb, total_gb, read_speed, write_speed, max_read, max_write)
 
                 self._drive_cards[key] = card
-                self.drives_layout.addWidget(card)
+                self.drives_layout.insertWidget(max(0, self.drives_layout.count() - 1), card)
 
         # Remove cards for drives that disappeared
         remove_keys = existing_keys - seen_keys

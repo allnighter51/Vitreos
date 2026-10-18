@@ -1,3 +1,4 @@
+# pyright: reportIncompatibleMethodOverride=false
 """
 Vitreos Tactical Sidebar - Phosphor Glow Logo and Pulse Log
 """
@@ -12,6 +13,7 @@ from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPaintEvent
 from datetime import datetime
 
 from src.ui.vitreos_theme import VITREOS_COLORS, FONT_SIZES, get_font
+import os
 import random
 
 # ── Tag → hex color lookup (shared by delegate and append_log) ──────────────
@@ -338,7 +340,7 @@ class VitreosSidebar(QWidget):
         layout.addStretch()
         
         # Right: PID
-        pid = QLabel("PID: 31337")
+        pid = QLabel(f"PID: {os.getpid()}")
         pid.setFont(get_font('mono', FONT_SIZES['micro']))
         pid.setStyleSheet(f"color: {VITREOS_COLORS['text_dim']};")
         layout.addWidget(pid)
@@ -417,10 +419,9 @@ class VitreosSidebar(QWidget):
         self.clock_timer.start(1000)
         self._update_clock()
         
-        # Log simulation engine
-        self.log_sim_timer = QTimer(self)
-        self.log_sim_timer.timeout.connect(self._simulate_log_entry)
-        self._schedule_next_log()
+        # Seed initial genuine logs
+        self.append_log('SYS', f'SYS_INIT: Host PID {os.getpid()} active', 'text_secondary')
+        self.append_log('SYS', 'Telemetry daemon online (1Hz event bridge)', 'text_dim')
     
     def _toggle_cursor(self) -> None:
         """Toggle cursor visibility."""
@@ -432,41 +433,6 @@ class VitreosSidebar(QWidget):
         now = datetime.now()
         time_str = now.strftime("%H:%M:%S")
         self.time_label.setText(time_str)
-    
-    def _schedule_next_log(self) -> None:
-        """Schedule next log entry with randomized interval."""
-        interval = random.randint(200, 1500)
-        self.log_sim_timer.start(interval)
-    
-    def _simulate_log_entry(self) -> None:
-        """Generate varied system log entries from message pool."""
-        import random
-        messages = [
-            ('SYS', 'Polling hardware sensors...', 'text_dim'),
-            ('GPU', 'Driver version: 546.33 WHQL', 'warning_orange'),
-            ('GPU', 'RTX 3060 detected - 12GB VRAM', 'warning_orange'),
-            ('MEM', f'RAM usage: {random.randint(60, 85)}.{random.randint(0, 9)}%', 'purple_dim'),
-            ('CPU', f'P-core freq: {random.randint(4800, 5200)} MHz', 'cyan'),
-            ('CPU', f'Package temp: {random.randint(45, 75)}°C', 'cyan'),
-            ('NET', f'Packet loss: {random.choice(["0.0", "0.1", "0.0", "0.0"])}%', 'green'),
-            ('NET', f'Latency: {random.randint(8, 25)}ms', 'green'),
-            ('WARN', f'CPU temp elevated: {random.randint(85, 95)}°C', 'critical_red'),
-            ('FAN', f'RPM fluctuation detected: {random.randint(1200, 2400)} RPM', 'warning_orange'),
-            ('SYS', 'Telemetry poll complete', 'text_dim'),
-            ('GPU', f'Core clock: {random.randint(1500, 1900)} MHz', 'warning_orange'),
-            ('GPU', f'Memory clock: {random.randint(7000, 8000)} MHz', 'warning_orange'),
-            ('MEM', f'Available: {random.randint(4, 12)}.{random.randint(0, 9)} GB', 'purple_dim'),
-            ('CPU', f'Thread count: {random.choice([16, 16, 16, 24, 32])}', 'cyan'),
-            ('NET', f'Download: {random.randint(0, 100)}.{random.randint(0, 9)} Mbps', 'green'),
-            ('SYS', 'Hardware scan initiated', 'text_dim'),
-            ('FAN', f'GPU fan speed: {random.randint(30, 80)}%', 'warning_orange'),
-        ]
-        
-        level, message, color = random.choice(messages)
-        self.append_log(level, message, color)
-        
-        # Schedule next entry
-        self._schedule_next_log()
     
     def append_log(self, level: str, message: str, color: str = 'text_dim') -> None:
         """Append a single log entry (called by 1Hz batch flush)"""

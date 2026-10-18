@@ -1,4 +1,4 @@
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnusedVariable=false
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnusedVariable=false, reportAttributeAccessIssue=false
 """
 Vitreos Monitoring Modules - Dashboard Widgets
 Individual monitoring components for the 2x3 grid layout
@@ -144,7 +144,7 @@ class GpuCard(QWidget):
         fan_row.setSpacing(4)
         
         self.fan_labels = {}
-        for fan_id in ['FAN 1', 'FAN 2', 'REAR']:
+        for fan_id in ['FAN 1', 'FAN 2', 'FAN 3']:
             fan_card = QWidget()
             fan_card.setStyleSheet(f"background: {VITREOS_COLORS['bg_card']}; border: 1px solid {VITREOS_COLORS['border_secondary']};")
             fan_layout = QVBoxLayout(fan_card)
@@ -159,7 +159,7 @@ class GpuCard(QWidget):
             
             fan_rpm = QLabel("0")
             fan_rpm.setFont(get_font('mono', FONT_SIZES['small']))
-            fan_rpm.setStyleSheet(f"color: {VITREOS_COLORS['primary_purple'] if 'FAN' in fan_id else 'cyan'};")
+            fan_rpm.setStyleSheet(f"color: {VITREOS_COLORS['primary_purple']};")
             fan_rpm.setAlignment(Qt.AlignmentFlag.AlignCenter)
             fan_layout.addWidget(fan_rpm)
             
@@ -246,10 +246,13 @@ class GpuCard(QWidget):
         self.bw_bar.set_value(bandwidth, 1000)
         
         fan_speed = data.get('fanSpeed', 0)
-        fan_rpm = int(fan_speed * 30)
+        fan_rpm = data.get('fanRpm', None)
+        if fan_rpm is None:
+            fan_rpm = int(fan_speed * 30) if fan_speed > 0 else 0
         self.fan_labels['FAN 1'].setText(f"{fan_rpm}")
         self.fan_labels['FAN 2'].setText(f"{fan_rpm}")
-        self.fan_labels['REAR'].setText(f"{int(fan_rpm * 0.8)}")
+        if 'FAN 3' in self.fan_labels:
+            self.fan_labels['FAN 3'].setText(f"{fan_rpm}")
 
 
 class GpuMonitor(VitreosWinFrame):

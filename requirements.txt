@@ -5,3 +5,4 @@ requests
 pywin32
 websockets
 pypresence
+pyinstaller>=6.5.0

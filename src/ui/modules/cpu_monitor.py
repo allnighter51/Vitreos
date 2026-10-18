@@ -5,6 +5,7 @@ Individual monitoring components for the 2x3 grid layout
 """
 
 from typing import Optional, List, Dict, Any
+import re
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QFrame
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPaintEvent
@@ -165,7 +166,8 @@ class CpuMonitor(VitreosWinFrame):
             self.core_widgets.append(core_widget)
     
     def update_data(self, data: Dict[str, Any]) -> None:
-        cpu_name = data.get('name', 'Unknown CPU')
+        raw_name = str(data.get('name', 'Unknown CPU') or 'Unknown CPU')
+        cpu_name = re.sub(r'\s+\d+-[Cc]ore\s+[Pp]rocessor', '', raw_name, flags=re.IGNORECASE).strip()
         
         # Header state transition: DETECTING → CPU NAME
         # Transition labels: DETECTING / INITIALIZING -> ACTIVE / RYZEN_CONNECTED

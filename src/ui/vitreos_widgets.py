@@ -1,3 +1,4 @@
+# pyright: reportIncompatibleMethodOverride=false, reportAttributeAccessIssue=false
 """
 Vitreos Custom Widgets - PyQt6 Implementation
 Specialized UI components matching Figma design specifications
@@ -8,6 +9,7 @@ from PyQt6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, Q
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal, QEvent
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QPaintEvent, QFont, QEnterEvent, QMouseEvent
 from datetime import datetime
+import os
 
 from src.ui.vitreos_theme import (
     VITREOS_COLORS, FONT_SIZES, get_color, get_font, hex_to_qcolor
@@ -1164,7 +1166,7 @@ class SystemPulseLog(QWidget):
         layout.addStretch()
         
         # PID with glow effect
-        pid = QLabel("PID: 31337")
+        pid = QLabel(f"PID: {os.getpid()}")
         pid.setFont(get_font('mono', FONT_SIZES['tiny']))
         pid.setStyleSheet(f"""
             color: {VITREOS_COLORS['green']};

@@ -325,45 +325,38 @@ class ThermalCtrl(VitreosWinFrame):
             self.sensors['GPU'].setText("--°")
             
         # Update Fans
-        # Realistic RPM curves based on temp
-        if cpu_temp > 0:
-            # CPU curve: 800 RPM at 30C, up to 2500 RPM at 90C
-            cpu_rpm = min(3000, max(800, int(800 + (cpu_temp - 30) * 30)))
-            self._update_fan('CPU_FAN', cpu_rpm)
-            
-            # Case fans follow CPU temp loosely
-            case_top = max(500, int(cpu_rpm * 0.5))
-            case_front = max(600, int(cpu_rpm * 0.7))
-            case_rear = max(700, int(cpu_rpm * 0.8))
-            self._update_fan('CASE_TOP', case_top)
-            self._update_fan('CASE_FRONT', case_front)
-            self._update_fan('CASE_REAR', case_rear)
-        else:
-            self._update_fan('CPU_FAN', 0)
-            self._update_fan('CASE_TOP', 0)
-            self._update_fan('CASE_FRONT', 0)
-            self._update_fan('CASE_REAR', 0)
-            
-        if gpu_temp > 0:
-            # GPU curve: 0 RPM under 50C, up to 3000 RPM at 85C
-            if gpu_temp < 50:
-                gpu_rpm = 0
-            else:
-                gpu_rpm = min(3500, int(1000 + (gpu_temp - 50) * 60))
-            self._update_fan('GPU_FAN1', gpu_rpm)
-            self._update_fan('GPU_FAN2', int(gpu_rpm * 0.95)) # slightly different
-        else:
-            self._update_fan('GPU_FAN1', 0)
-            self._update_fan('GPU_FAN2', 0)
+        # GPU fans: bind directly to real NVML telemetry
+        gpus = data.get('gpu', [])
+        primary_gpu = gpus[0] if isinstance(gpus, list) and gpus else (gpus if isinstance(gpus, dict) else {})
+        gpu_fan_speed = primary_gpu.get('fanSpeed', 0)
+        gpu_fan_rpm = primary_gpu.get('fanRpm', None)
+        if gpu_fan_rpm is None:
+            gpu_fan_rpm = int(gpu_fan_speed * 30) if gpu_fan_speed > 0 else 0
 
-    def _update_fan(self, name: str, rpm: int) -> None:
+        self._update_fan('GPU_FAN1', gpu_fan_rpm)
+        self._update_fan('GPU_FAN2', gpu_fan_rpm)
+
+        # Motherboard headers: cleanly indicate NO SIO fallback when SuperIO sensor chips are unexposed
+        self._update_fan('CPU_FAN', 0, no_sio=True)
+        self._update_fan('CASE_TOP', 0, no_sio=True)
+        self._update_fan('CASE_FRONT', 0, no_sio=True)
+        self._update_fan('CASE_REAR', 0, no_sio=True)
+
+    def _update_fan(self, name: str, rpm: int, no_sio: bool = False) -> None:
         if name in self.fans:
             fan = self.fans[name]
-            if rpm > 0:
+            if no_sio:
+                c_dim = VITREOS_COLORS['text_dim']
+                c_dark = VITREOS_COLORS['text_darker']
+                fan['label'].setText(f"<span style='color:{c_dim}'>0</span> <span style='color:{c_dark}'>RPM [NO SIO]</span>")
+                fan['bar'].set_value(0, fan['max'])
+            elif rpm > 0:
                 c_val = VITREOS_COLORS[fan['color']]
                 c_dim = VITREOS_COLORS['text_darker']
                 fan['label'].setText(f"<span style='color:{c_val}'>{rpm}</span> <span style='color:{c_dim}'>RPM</span>")
+                fan['bar'].set_value(rpm, fan['max'])
             else:
-                fan['label'].setText(f"<span style='color:{VITREOS_COLORS['text_dim']}'>--</span> <span style='color:{VITREOS_COLORS['text_darker']}'>RPM</span>")
-                
-            fan['bar'].set_value(rpm, fan['max'])
+                c_dim = VITREOS_COLORS['text_dim']
+                c_dark = VITREOS_COLORS['text_darker']
+                fan['label'].setText(f"<span style='color:{c_dim}'>0</span> <span style='color:{c_dark}'>RPM</span>")
+                fan['bar'].set_value(0, fan['max'])

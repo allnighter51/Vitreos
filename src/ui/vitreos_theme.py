@@ -97,13 +97,10 @@ def load_google_fonts() -> Dict[str, bool]:
     """
     status = {}
     
-    # Get absolute path to fonts directory
-    # Go up from src/ui/ to project root, then into assets/fonts/
-    current_file = os.path.abspath(__file__)
-    ui_dir = os.path.dirname(current_file)
-    src_dir = os.path.dirname(ui_dir)
-    project_root = os.path.dirname(src_dir)
-    font_dir = os.path.join(project_root, 'assets', 'fonts')
+    # Get path to fonts directory via centralized bundle resolver
+    from src.core.paths import get_bundle_dir
+    bundle_dir = get_bundle_dir()
+    font_dir = bundle_dir / 'assets' / 'fonts'
     
     print(f"[VITREOS THEME] Looking for fonts in: {font_dir}")
     
@@ -113,10 +110,10 @@ def load_google_fonts() -> Dict[str, bool]:
     }
     
     for font_name, font_file in fonts_to_load.items():
-        font_path = os.path.join(font_dir, font_file)
+        font_path = font_dir / font_file
         
-        if os.path.exists(font_path):
-            font_id = QFontDatabase.addApplicationFont(font_path)
+        if font_path.exists():
+            font_id = QFontDatabase.addApplicationFont(str(font_path))
             if font_id != -1:
                 status[font_name] = True
                 print(f"[VITREOS THEME] Loaded font: {font_name} from {font_path}")

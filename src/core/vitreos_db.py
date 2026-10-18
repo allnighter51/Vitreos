@@ -71,16 +71,17 @@ class VitreosDB:
         Initializes the database, creates the necessary tables, and starts the
         background worker thread for handling database operations.
         """
-        # Resolve relative paths against the project root (two levels above this file)
-        # Ensure the DB ends up under the repository-level `data/` directory.
+        # Resolve relative paths against the application directory (works in frozen bundle and dev)
+        # Ensure the DB ends up under the application-level `data/` directory.
         if not os.path.isabs(db_path):
-            project_root = Path(__file__).resolve().parents[2]
+            from src.core.paths import get_app_dir
+            app_dir = get_app_dir()
             db_path_obj = Path(db_path)
             # If caller already provided a path starting with 'data/', respect it.
             if len(db_path_obj.parts) > 0 and db_path_obj.parts[0] == 'data':
-                db_path = str(project_root / db_path_obj)
+                db_path = str(app_dir / db_path_obj)
             else:
-                db_path = str(project_root / 'data' / db_path_obj)
+                db_path = str(app_dir / 'data' / db_path_obj)
 
         # Ensure parent directory exists (e.g., data/)
         os.makedirs(os.path.dirname(db_path), exist_ok=True)

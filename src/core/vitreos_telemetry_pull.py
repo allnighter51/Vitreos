@@ -1,4 +1,4 @@
-# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportConstantRedefinition=false
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportConstantRedefinition=false, reportPossiblyUnboundVariable=false, reportOperatorIssue=false, reportOptionalMemberAccess=false
 """
 Vitreos Pulse - Python-Based Telemetry Fallback
 Optimized for sustainable monitoring with minimal CPU overhead
@@ -14,6 +14,8 @@ from collections import deque
 from datetime import datetime
 import threading
 import time
+import os
+import re
 
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal, QThread
 
@@ -52,10 +54,23 @@ class TelemetryWorkerThread(QThread):
         self.last_net_io = psutil.net_io_counters()
         self.last_net_time = time.time()
         
+        # Disk tracking
+        try:
+            self.last_disk_io = psutil.disk_io_counters(perdisk=False)
+            self.last_perdisk_io = psutil.disk_io_counters(perdisk=True)
+        except Exception:
+            self.last_disk_io = None
+            self.last_perdisk_io = {}
+        self.last_disk_time = time.time()
+        self._disk_cache: Dict[int, Dict[str, Any]] = {}
+        self._drive_to_disk_cache: Dict[str, int] = {}
+        self._last_disk_cache_time = 0.0
+
         # CPU info cache
         self.cpu_name = self._get_cpu_name()
 
     def _get_cpu_name(self) -> str:
+        name = ""
         try:
             if WMI_AVAILABLE:
                 import wmi
@@ -63,21 +78,57 @@ class TelemetryWorkerThread(QThread):
                 pythoncom.CoInitialize()
                 c = wmi.WMI()
                 for cpu in c.Win32_Processor():
-                    name = cpu.Name.strip()
+                    name = str(cpu.Name or '').strip()
                     pythoncom.CoUninitialize()
-                    return name
+                    break
         except Exception:
             pass
-        # Fallback to standard platform/psutil techniques if WMI fails
-        import platform
+        if not name:
+            # Fallback to standard platform/psutil techniques if WMI fails
+            try:
+                import winreg
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+                name = str(winreg.QueryValueEx(key, "ProcessorNameString")[0] or '').strip()
+                winreg.CloseKey(key)
+            except Exception:
+                import platform
+                name = str(platform.processor() or 'CPU').strip()
+        # Clean redundant core suffix (e.g. '12-Core Processor') to prevent UI overflow
+        cleaned = re.sub(r'\s+\d+-[Cc]ore\s+[Pp]rocessor', '', name).strip()
+        return cleaned or name
+
+    def _update_disk_cache(self, wmi_client) -> None:
+        if not wmi_client:
+            return
         try:
-            import winreg
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
-            name = winreg.QueryValueEx(key, "ProcessorNameString")[0]
-            winreg.CloseKey(key)
-            return name.strip()
-        except:
-            return platform.processor()
+            part_to_disk: Dict[str, int] = {}
+            for p in wmi_client.Win32_DiskPartition():
+                part_to_disk[str(p.DeviceID)] = int(p.DiskIndex)
+
+            drive_to_disk: Dict[str, int] = {}
+            for rel in wmi_client.Win32_LogicalDiskToPartition():
+                try:
+                    ant_id = str(rel.Antecedent.DeviceID)
+                    dep_id = str(rel.Dependent.DeviceID)
+                    if ant_id in part_to_disk:
+                        drive_to_disk[dep_id] = part_to_disk[ant_id]
+                except Exception:
+                    pass
+
+            disk_info: Dict[int, Dict[str, Any]] = {}
+            for d in wmi_client.Win32_DiskDrive():
+                disk_info[int(d.Index)] = {
+                    'model': str(d.Model or 'Generic Disk').strip(),
+                    'serial': str(d.SerialNumber or 'N/A').strip(),
+                    'interface': str(d.InterfaceType or '').strip(),
+                    'size': int(d.Size or 0)
+                }
+
+            self._drive_to_disk_cache = drive_to_disk
+            self._disk_cache = disk_info
+            self._last_disk_cache_time = time.time()
+        except Exception:
+            pass
 
     def run(self):
         wmi_client = None
@@ -110,6 +161,9 @@ class TelemetryWorkerThread(QThread):
             return self.latest_data.copy()
 
     def _poll_all(self, wmi_client) -> Dict[str, Any]:
+        if wmi_client and (time.time() - self._last_disk_cache_time > 30.0 or not self._disk_cache):
+            self._update_disk_cache(wmi_client)
+
         return {
             'cpu': self._poll_cpu(wmi_client),
             'gpu': self._poll_gpu(wmi_client),
@@ -147,8 +201,8 @@ class TelemetryWorkerThread(QThread):
         }
 
     def _poll_gpu(self, wmi_client=None) -> List[Dict[str, Any]]:
-        gpus = []
-        nvml_gpu_names = set()
+        gpus: List[Dict[str, Any]] = []
+        nvml_gpu_names: set[str] = set()
         
         # 1. NVIDIA GPUs via NVML
         if NVML_AVAILABLE:
@@ -176,6 +230,12 @@ class TelemetryWorkerThread(QThread):
                         
                         try: fan = pynvml.nvmlDeviceGetFanSpeed(handle)
                         except: fan = 0
+
+                        try: fan_rpm = pynvml.nvmlDeviceGetFanSpeed_v2(handle, 0)
+                        except: fan_rpm = None
+
+                        if fan_rpm is None:
+                            fan_rpm = int(fan * 30) if fan > 0 else 0
                         
                         bw = (mem_clock * 2 * 256) / 8000.0 if mem_clock > 0 else 0.0
                         
@@ -192,6 +252,7 @@ class TelemetryWorkerThread(QThread):
                             'vramPercent': (mem_info.used / mem_info.total) * 100.0 if mem_info.total > 0 else 0,
                             'memBandwidth': bw,
                             'fanSpeed': fan,
+                            'fanRpm': fan_rpm,
                             'is_nvml': True
                         })
                     except Exception:
@@ -202,20 +263,26 @@ class TelemetryWorkerThread(QThread):
         # 2. Other GPUs via WMI (e.g. Intel iGPU or AMD)
         if wmi_client:
             try:
+                VIRTUAL_GPU_SUBSTRINGS = (
+                    'virtual', 'oculus', 'meta', 'parsec', 'microsoft basic display', 
+                    'remote desktop', 'spacedesk', 'rdp', 'v-display', 'citrix', 'indirect display'
+                )
                 for vc in wmi_client.Win32_VideoController():
                     name = vc.Name.strip() if vc.Name else "Unknown GPU"
                     # Skip if we already got this via NVML
                     if name in nvml_gpu_names or any(name in n for n in nvml_gpu_names):
                         continue
+                    # Skip virtual display adapters
+                    if any(v in name.lower() for v in VIRTUAL_GPU_SUBSTRINGS):
+                        continue
                     
                     vram_bytes = 0
                     if vc.AdapterRAM:
-                        # Sometimes AdapterRAM is returned as signed integer and can be negative if > 2GB
                         vram_bytes = abs(int(vc.AdapterRAM))
                     
                     gpus.append({
                         'name': name,
-                        'vramTotal': vram_bytes / (1024**3) if vram_bytes else 4.0, # Guess 4GB for iGPU if not found
+                        'vramTotal': vram_bytes / (1024**3) if vram_bytes else 4.0,
                         'driver': vc.DriverVersion if vc.DriverVersion else 'Unknown',
                         'coreClock': 0,
                         'memClock': 0,
@@ -226,13 +293,14 @@ class TelemetryWorkerThread(QThread):
                         'vramPercent': 0.0,
                         'memBandwidth': 0.0,
                         'fanSpeed': 0,
+                        'fanRpm': 0,
                         'is_nvml': False
                     })
             except Exception:
                 pass
 
         if not gpus:
-            gpus.append({'name': 'NO GPU', 'vramTotal': 0, 'driver': 'N/A', 'coreClock': 0, 'memClock': 0, 'power': 0, 'temp': 0, 'usage': 0, 'vramUsed': 0, 'vramPercent': 0, 'memBandwidth': 0, 'fanSpeed': 0, 'is_nvml': False})
+            gpus.append({'name': 'NO GPU', 'vramTotal': 0, 'driver': 'N/A', 'coreClock': 0, 'memClock': 0, 'power': 0, 'temp': 0, 'usage': 0, 'vramUsed': 0, 'vramPercent': 0, 'memBandwidth': 0, 'fanSpeed': 0, 'fanRpm': 0, 'is_nvml': False})
 
         return gpus
 
@@ -255,7 +323,7 @@ class TelemetryWorkerThread(QThread):
                 except Exception:
                     pass
 
-                # ── 2. Populated sticks ────────────────────────────────────
+                # ── 2. Populated physical sticks ──────────────────────────
                 try:
                     for stick in wmi_client.Win32_PhysicalMemory():
                         cap_bytes: int = 0
@@ -270,10 +338,22 @@ class TelemetryWorkerThread(QThread):
                         except Exception:
                             pass
 
+                        bank_raw = str(stick.BankLabel or '').strip()
+                        loc_raw = str(stick.DeviceLocator or f'SLOT{len(slots)+1}').strip()
+
+                        # Disambiguate locator if BankLabel specifies channel (e.g. 'P0 CHANNEL A' vs 'P0 CHANNEL B')
+                        m_chan = re.search(r'CHANNEL\s*([A-Za-z0-9]+)', bank_raw, re.IGNORECASE)
+                        m_loc_num = re.search(r'(\d+)', loc_raw)
+                        num_str = m_loc_num.group(1) if m_loc_num else str(len(slots) + 1)
+                        if m_chan and ('CHANNEL' not in loc_raw.upper() and not re.search(r'[A-D]\d', loc_raw)):
+                            chan_str = m_chan.group(1).upper()
+                            resolved_locator = f"DIMM_{chan_str}{num_str}"
+                        else:
+                            resolved_locator = loc_raw
+
                         slots.append({
-                            # Raw DeviceLocator — displayed as-is in the UI
-                            'locator':      str(stick.DeviceLocator or f'SLOT{len(slots)}').strip(),
-                            'bankLabel':    str(stick.BankLabel    or '').strip(),
+                            'locator':      resolved_locator,
+                            'bankLabel':    bank_raw,
                             'capacityGB':   cap_bytes / (1024 ** 3),
                             'speed':        clk,
                             'manufacturer': str(stick.Manufacturer or '').strip(),
@@ -307,14 +387,33 @@ class TelemetryWorkerThread(QThread):
             if total_slots > 2:
                 total_slots = 4
 
-        # Effective speed: double the configured clock (DDR)
-        effective_speed = speed * 2 if speed else 0
+        # Effective speed: DDR5 clock reported in MT/s directly when >= 3600
+        if speed:
+            effective_speed = speed if speed >= 3600 else speed * 2
+        else:
+            effective_speed = 0
+
+        # Standby / Cached memory from WMI PerfOS
+        standby_gb = 0.0
+        if wmi_client:
+            try:
+                perfs = wmi_client.Win32_PerfFormattedData_PerfOS_Memory()
+                if perfs:
+                    p = perfs[0]
+                    norm = int(getattr(p, 'StandbyCacheNormalPriorityBytes', 0) or 0)
+                    core = int(getattr(p, 'StandbyCacheCoreBytes', 0) or 0)
+                    resv = int(getattr(p, 'StandbyCacheReserveBytes', 0) or 0)
+                    standby_gb = (norm + core + resv) / (1024 ** 3)
+            except Exception:
+                pass
+        if standby_gb <= 0.0:
+            standby_gb = max(0.0, (mem.available - mem.free) / (1024 ** 3))
 
         return {
             'totalGB':       mem.total    / (1024 ** 3),
             'usedGB':        mem.used     / (1024 ** 3),
             'availableGB':   mem.available / (1024 ** 3),
-            'cachedGB':      (getattr(mem, 'cached', 0) or 0) / (1024 ** 3),
+            'cachedGB':      standby_gb,
             'percent':       mem.percent,
             'slots':         slots,
             'totalSlots':    total_slots,
@@ -323,45 +422,100 @@ class TelemetryWorkerThread(QThread):
         }
 
     def _poll_storage(self) -> Dict[str, Any]:
-        # Get IO counters to calculate speeds
+        now = time.time()
+        dt = max(0.001, now - getattr(self, 'last_disk_time', now))
+
         try:
             current_io = psutil.disk_io_counters(perdisk=False)
-            now = time.time()
-            dt = now - getattr(self, 'last_disk_time', now)
-            if dt > 0 and hasattr(self, 'last_disk_io') and self.last_disk_io:
+            current_perdisk = psutil.disk_io_counters(perdisk=True)
+            if hasattr(self, 'last_disk_io') and self.last_disk_io and current_io:
                 global_read_speed = ((current_io.read_bytes - self.last_disk_io.read_bytes) / dt) / (1024 * 1024)
                 global_write_speed = ((current_io.write_bytes - self.last_disk_io.write_bytes) / dt) / (1024 * 1024)
             else:
                 global_read_speed = 0.0
                 global_write_speed = 0.0
-            self.last_disk_io = current_io
-            self.last_disk_time = now
-        except:
+        except Exception:
+            current_io = None
+            current_perdisk = {}
             global_read_speed = 0.0
             global_write_speed = 0.0
 
         drives = []
         try:
             for part in psutil.disk_partitions(all=False):
-                if 'cdrom' in part.opts or part.fstype == '': continue
+                if 'cdrom' in part.opts or part.fstype == '':
+                    continue
                 try:
                     usage = psutil.disk_usage(part.mountpoint)
                     dev_id = part.device.replace('\\', '')
+                    
+                    # Map to physical disk info
+                    disk_idx = self._drive_to_disk_cache.get(dev_id)
+                    pdisk = self._disk_cache.get(disk_idx, {}) if disk_idx is not None else {}
+                    model = str(pdisk.get('model') or f"Drive {dev_id}").strip()
+                    serial = str(pdisk.get('serial') or 'N/A').strip()
+
+                    # Determine media type and throughput rating
+                    m_lower = model.lower()
+                    if 'nvme' in m_lower or 'sn770' in m_lower or '970' in m_lower or 'pci' in m_lower:
+                        drive_type = 'NVMe'
+                        if 'sn770' in m_lower or '980 pro' in m_lower or '990 pro' in m_lower or 'gen4' in m_lower:
+                            max_read = 5150
+                            max_write = 4900
+                        else:
+                            max_read = 3500
+                            max_write = 3300
+                    elif 'ssd' in m_lower:
+                        drive_type = 'SSD'
+                        max_read = 560
+                        max_write = 530
+                    elif 'st2000' in m_lower or 'barracuda' in m_lower or 'hdd' in m_lower or ('wd' in m_lower and 'blue' in m_lower):
+                        drive_type = 'HDD'
+                        max_read = 220
+                        max_write = 220
+                    else:
+                        drive_type = 'SSD/NVMe'
+                        max_read = 3500
+                        max_write = 3000
+
+                    # Calculate per-disk throughput
+                    read_speed = 0.0
+                    write_speed = 0.0
+                    if disk_idx is not None:
+                        pdisk_key = f"PhysicalDrive{disk_idx}"
+                        if pdisk_key in current_perdisk and hasattr(self, 'last_perdisk_io') and pdisk_key in self.last_perdisk_io:
+                            prev_p = self.last_perdisk_io[pdisk_key]
+                            curr_p = current_perdisk[pdisk_key]
+                            read_speed = max(0.0, ((curr_p.read_bytes - prev_p.read_bytes) / dt) / (1024 * 1024))
+                            write_speed = max(0.0, ((curr_p.write_bytes - prev_p.write_bytes) / dt) / (1024 * 1024))
+                    if read_speed <= 0.0 and global_read_speed > 0.0 and len(drives) == 0:
+                        read_speed = global_read_speed
+                    if write_speed <= 0.0 and global_write_speed > 0.0 and len(drives) == 0:
+                        write_speed = global_write_speed
+
                     drives.append({
                         'device': dev_id,
                         'mountpoint': part.mountpoint,
-                        'model': f"Drive {dev_id}",
-                        'serial': 'N/A',
-                        'type': 'SSD/NVMe',
+                        'model': model,
+                        'serial': serial,
+                        'type': drive_type,
                         'totalGB': usage.total / (1024**3),
                         'usedGB': usage.used / (1024**3),
-                        'readSpeed': max(0.0, global_read_speed),
-                        'writeSpeed': max(0.0, global_write_speed),
-                        'temp': 40
+                        'readSpeed': read_speed,
+                        'writeSpeed': write_speed,
+                        'maxRead': max_read,
+                        'maxWrite': max_write,
+                        'temp': 0
                     })
-                except: continue
-        except: pass
-        
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        self.last_disk_io = current_io
+        self.last_perdisk_io = current_perdisk
+        self.last_disk_time = now
+
         return {
             'drives': drives,
             'reads': current_io.read_count if current_io else 0,
@@ -441,6 +595,7 @@ class PullBasedTelemetry(QObject):
         self._last_cpu_temp = 0
         self._last_gpu_temp = 0
         self._network_peak = 0
+        self._initial_discovery_logged = False
         
         v_info("Python Pull-based telemetry initialized")
     
@@ -484,6 +639,25 @@ class PullBasedTelemetry(QObject):
         gpu_data_source = data.get('gpu', [])
         gpu_data = gpu_data_source[0] if isinstance(gpu_data_source, list) and gpu_data_source else (gpu_data_source if isinstance(gpu_data_source, dict) else {})
         
+        # Initial genuine hardware discovery announcement
+        if not self._initial_discovery_logged:
+            self._initial_discovery_logged = True
+            cpu_info = data.get('cpu', {})
+            c_name = cpu_info.get('name')
+            if c_name:
+                self._buffer_log("CPU", f"{c_name} online", "cyan")
+            if gpu_data.get('name') and gpu_data.get('name') != 'NO GPU':
+                drv = f" (Driver {gpu_data.get('driver')})" if gpu_data.get('driver') else ""
+                self._buffer_log("GPU", f"{gpu_data.get('name')}{drv}", "warning_orange")
+            mem_data = data.get('memory', {})
+            t_gb = mem_data.get('totalGB', 0)
+            chan = mem_data.get('channel', 'Dual')
+            eff_spd = mem_data.get('effectiveSpeed', 0)
+            spd_text = f" @ {eff_spd} MT/s" if eff_spd else ""
+            if t_gb > 0:
+                self._buffer_log("MEM", f"{t_gb:.0f} GB {chan}-Channel RAM{spd_text}", "purple_dim")
+            self._flush_logs_to_ui()
+
         gpu_load = gpu_data.get('usage', 0)
         cpu_temp = data.get('cpu', {}).get('temp', 0)
         gpu_temp = gpu_data.get('temp', 0)

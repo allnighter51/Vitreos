@@ -6,9 +6,16 @@ from pathlib import Path
 from typing import Dict, Any
 
 
+def _get_settings_path() -> Path:
+    from src.core.paths import get_app_dir
+    path = get_app_dir() / "config" / "settings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def load_settings() -> Dict[str, Any]:
-    """Load application settings from settings.json"""
-    settings_path = Path(__file__).parent / "settings.json"
+    """Load application settings from settings.json in app directory"""
+    settings_path = _get_settings_path()
     
     default_settings = {
         "discord": {
@@ -28,6 +35,17 @@ def load_settings() -> Dict[str, Any]:
     }
     
     try:
+        if not settings_path.exists():
+            # Check if default settings.json exists in bundle
+            from src.core.paths import get_bundle_dir
+            bundled_path = get_bundle_dir() / "config" / "settings.json"
+            if bundled_path.exists():
+                try:
+                    import shutil
+                    shutil.copy2(bundled_path, settings_path)
+                except Exception:
+                    pass
+
         if settings_path.exists():
             with open(settings_path, 'r', encoding='utf-8') as f:
                 loaded_settings = json.load(f)
@@ -47,8 +65,8 @@ def load_settings() -> Dict[str, Any]:
 
 
 def save_settings(settings: Dict[str, Any]) -> bool:
-    """Save application settings to settings.json"""
-    settings_path = Path(__file__).parent / "settings.json"
+    """Save application settings to settings.json in app directory"""
+    settings_path = _get_settings_path()
     
     try:
         with open(settings_path, 'w', encoding='utf-8') as f:
